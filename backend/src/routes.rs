@@ -1,5 +1,8 @@
 use axum::Json;
 use serde::Serialize;
+use std::env;
+
+use crate::scanner::{self, BookItem};
 
 #[derive(Serialize)]
 pub struct HealthResponse {
@@ -16,4 +19,12 @@ pub async fn health_check() -> Json<HealthResponse> {
     };
 
     Json(response)
+}
+
+pub async fn get_books() -> Json<Vec<BookItem>> {
+    let books_dir =
+        env::var("BOOKS_DIR").unwrap_or_else(|_| "/home/kernelcraft/Documents/E-Book".to_string());
+
+    let books = scanner::scan_books_dir(&books_dir);
+    Json(books)
 }

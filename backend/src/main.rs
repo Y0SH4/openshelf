@@ -2,7 +2,9 @@ use axum::{Router, routing::get};
 use tower_http::cors::{Any, CorsLayer};
 
 mod routes;
-use routes::health_check;
+mod scanner;
+
+use routes::{get_books, health_check};
 
 #[tokio::main]
 async fn main() {
@@ -13,6 +15,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/health", get(health_check))
+        .route("/api/books/", get(get_books))
         .layer(cors);
 
     let addr = "0.0.0.0:3000";
