@@ -1,0 +1,14 @@
+# Rust
+/target
+backend/target
+
+# Node / Frontend
+node_modules
+frontend/node_modules
+dist
+frontend/dist
+
+# Environment & IDE
+.env
+.DS_Store
+*.local
