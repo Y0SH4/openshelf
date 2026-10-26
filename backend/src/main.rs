@@ -4,7 +4,7 @@ use tower_http::cors::{Any, CorsLayer};
 mod routes;
 mod scanner;
 
-use routes::{get_books, health_check};
+use routes::{get_book_cover, get_book_raw, get_books, health_check};
 
 #[tokio::main]
 async fn main() {
@@ -15,7 +15,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/health", get(health_check))
-        .route("/api/books/", get(get_books))
+        .route("/api/books", get(get_books))
+        .route("/api/books/{id}/raw", get(get_book_raw))
+        .route("/api/books/{id}/cover", get(get_book_cover))
         .layer(cors);
 
     let addr = "0.0.0.0:3000";

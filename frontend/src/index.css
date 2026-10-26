@@ -1,111 +1,103 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+    --background: 45 20% 97%;
+    --foreground: 30 15% 12%;
+
+    --card: 45 15% 95%;
+    --card-foreground: 30 15% 12%;
+
+    --popover: 45 20% 97%;
+    --popover-foreground: 30 15% 12%;
+
+    --primary: 30 15% 15%;
+    --primary-foreground: 45 20% 98%;
+
+    --secondary: 40 10% 91%;
+    --secondary-foreground: 30 15% 15%;
+
+    --muted: 40 10% 91%;
+    --muted-foreground: 30 10% 45%;
+
+    --accent: 40 15% 90%;
+    --accent-foreground: 30 15% 15%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 45 20% 98%;
+
+    --border: 40 10% 85%;
+    --input: 40 10% 85%;
+    --ring: 30 15% 20%;
+
+    --radius: 0.6rem;
   }
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+  .dark {
+    --background: 24 6% 10%;
+    --foreground: 40 15% 90%;
+
+    --card: 24 6% 14%;
+    --card-foreground: 40 15% 90%;
+
+    --popover: 24 6% 12%;
+    --popover-foreground: 40 15% 90%;
+
+    --primary: 40 15% 92%;
+    --primary-foreground: 24 6% 10%;
+
+    --secondary: 24 5% 18%;
+    --secondary-foreground: 40 15% 90%;
+
+    --muted: 24 5% 18%;
+    --muted-foreground: 40 10% 55%;
+
+    --accent: 24 5% 20%;
+    --accent-foreground: 40 15% 92%;
+
+    --destructive: 0 62% 40%;
+    --destructive-foreground: 40 15% 90%;
+
+    --border: 24 5% 22%;
+    --input: 24 5% 22%;
+    --ring: 40 15% 75%;
+  }
+
+  .sepia {
+    --background: 40 45% 92%;
+    --foreground: 28 35% 18%;
+
+    --card: 40 40% 87%;
+    --card-foreground: 28 35% 18%;
+
+    --popover: 40 45% 92%;
+    --popover-foreground: 28 35% 18%;
+
+    --primary: 28 35% 22%;
+    --primary-foreground: 40 45% 96%;
+
+    --secondary: 38 30% 84%;
+    --secondary-foreground: 28 35% 18%;
+
+    --muted: 38 30% 84%;
+    --muted-foreground: 28 20% 45%;
+
+    --accent: 38 35% 82%;
+    --accent-foreground: 28 35% 18%;
+
+    --border: 36 25% 78%;
+    --input: 36 25% 78%;
+    --ring: 28 35% 25%;
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+@layer base {
+  * {
+    @apply border-border;
   }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+  body {
+    @apply bg-background text-foreground font-sans transition-colors duration-200;
   }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
 }
