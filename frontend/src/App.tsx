@@ -306,35 +306,18 @@ export default function App() {
                 onClick={() => setSelectedBook(book)}
                 className="group cursor-pointer flex flex-col transition-all duration-200"
               >
-                {/* Book Card Cover with physical book aspect ratio (3:4) */}
-                <div className="relative aspect-[3/4] w-full rounded-md border border-border/80 bg-card p-4 flex flex-col justify-between shadow-xs transition-all duration-200 group-hover:-translate-y-1.5 group-hover:shadow-md group-hover:border-primary/50 overflow-hidden">
-                  {/* Subtle Book Spine Effect */}
-                  <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-black/10 dark:from-white/10 to-transparent pointer-events-none" />
+                <div className="relative aspect-[3/4] w-full rounded-md border border-border/80 bg-card overflow-hidden shadow-xs transition-all duration-200 group-hover:-translate-y-1.5 group-hover:shadow-md group-hover:border-primary/50">
+                  <img
+                    src={`/api/books/${book.id}/cover`}
+                    alt={book.title}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
 
-                  {/* Top badge */}
-                  <div className="flex justify-between items-start z-10">
+                  <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-black/20 to-transparent pointer-events-none" />
+
+                  <div className="absolute top-2 right-2 z-10">
                     <Badge variant="kindle">{book.format}</Badge>
-                    <Bookmark className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-primary transition-colors" />
-                  </div>
-
-                  {/* Center Book Art / Title Preview */}
-                  <div className="my-auto text-center px-1 z-10">
-                    <p className="font-serif font-bold text-sm md:text-base leading-snug line-clamp-4 text-foreground/90">
-                      {book.title}
-                    </p>
-                  </div>
-
-                  {/* Bottom Book Info & Progress Bar simulation */}
-                  <div className="pt-2 border-t border-border/50 z-10">
-                    <div className="w-full bg-secondary h-1 rounded-full overflow-hidden">
-                      <div className="bg-primary/60 h-full w-0 group-hover:w-full transition-all duration-500" />
-                    </div>
-                    <div className="flex justify-between items-center mt-2 text-[10px] text-muted-foreground">
-                      <span className="font-mono">#{book.id}</span>
-                      <span className="group-hover:text-primary font-medium transition-colors">
-                        Read →
-                      </span>
-                    </div>
                   </div>
                 </div>
 

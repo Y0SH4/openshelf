@@ -2,6 +2,7 @@ use epub::doc::EpubDoc;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -74,8 +75,51 @@ pub fn extract_epub_cover(file_path: &Path) -> Option<(Vec<u8>, String)> {
     doc.get_cover()
 }
 
+pub fn extract_pdf_cover(file_path: &Path, book_id: &str) -> Option<(Vec<u8>, String)> {
+    let cache_dir = Path::new(".cache/covers");
+    let _ = fs::create_dir_all(cache_dir);
+
+    let cached_file = cache_dir.join(format!("{}.png", book_id));
+    if let Ok(bytes) = fs::read(&cached_file) {
+        return Some((bytes, "image/png".to_string()));
+    }
+
+    let temp_prefix = cache_dir.join(format!("temp_{}", book_id));
+    let status = Command::new("pdftoppm")
+        .arg("-png")
+        .arg("-f")
+        .arg("1")
+        .arg("-l")
+        .arg("1")
+        .arg("-scale-to")
+        .arg("600")
+        .arg(file_path)
+        .arg(&temp_prefix)
+        .stderr(Stdio::null())
+        .status()
+        .ok()?;
+
+    if status.success() {
+        let candidate1 = cache_dir.join(format!("temp_{}-001.png", book_id));
+        let candidate2 = cache_dir.join(format!("temp_{}-1.png", book_id));
+        let generated = if candidate1.exists() {
+            candidate1
+        } else if candidate2.exists() {
+            candidate2
+        } else {
+            return None;
+        };
+
+        let _ = fs::rename(&generated, &cached_file);
+        if let Ok(bytes) = fs::read(&cached_file) {
+            return Some((bytes, "image/png".to_string()));
+        }
+    }
+
+    None
+}
+
 pub fn generate_svg_cover(title: &str, format_label: &str) -> Vec<u8> {
-    // Potong judul jika terlalu panjang agar muat di cover
     let display_title = if title.len() > 60 {
         format!("{}...", &title[..57])
     } else {

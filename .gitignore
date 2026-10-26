@@ -12,3 +12,8 @@ frontend/dist
 .env
 .DS_Store
 *.local
+.cache
+backend/.cache
+data/
+backend/data/
+*.db
