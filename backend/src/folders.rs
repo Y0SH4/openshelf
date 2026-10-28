@@ -57,9 +57,9 @@ pub async fn reload_roots(state: &AppState) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn folder_infos(state: &AppState) -> Vec<FolderInfo> {
+async fn folder_infos(state: &AppState) -> Vec<FolderInfo> {
     let mut counts: HashMap<i64, usize> = HashMap::new();
-    for book in state.library.books().iter() {
+    for book in state.library.books().await.books() {
         *counts.entry(book.folder_id).or_default() += 1;
     }
     state
@@ -87,7 +87,7 @@ fn expand_home(input: &str) -> PathBuf {
 
 /// GET /api/library/folders
 pub async fn list(State(state): State<AppState>) -> Json<Vec<FolderInfo>> {
-    Json(folder_infos(&state))
+    Json(folder_infos(&state).await)
 }
 
 /// POST /api/library/folders
@@ -146,7 +146,7 @@ pub async fn add(
     }
 
     reload_roots(&state).await?;
-    Ok((StatusCode::CREATED, Json(folder_infos(&state))))
+    Ok((StatusCode::CREATED, Json(folder_infos(&state).await)))
 }
 
 /// DELETE /api/library/folders/{id}
@@ -162,14 +162,14 @@ pub async fn remove(
         return Err(ApiError::not_found("Folder not found"));
     }
     reload_roots(&state).await?;
-    Ok(Json(folder_infos(&state)))
+    Ok(Json(folder_infos(&state).await))
 }
 
 /// POST /api/library/scan
 pub async fn rescan(State(state): State<AppState>) -> Json<ScanResult> {
     state.library.invalidate();
     Json(ScanResult {
-        book_count: state.library.books().len(),
+        book_count: state.library.books().await.books().len(),
     })
 }
 

@@ -64,10 +64,11 @@ impl IntoResponse for ApiError {
     }
 }
 
-fn find_book(state: &AppState, id: &str) -> Result<BookItem, ApiError> {
+async fn find_book(state: &AppState, id: &str) -> Result<BookItem, ApiError> {
     state
         .library
         .find(id)
+        .await
         .ok_or_else(|| ApiError::not_found("Buku tidak ditemukan"))
 }
 
@@ -186,11 +187,12 @@ pub async fn health_check() -> Json<HealthResponse> {
 }
 
 pub async fn get_books(State(state): State<AppState>) -> Json<Vec<BookItem>> {
-    let books = state.library.books();
+    let catalog = state.library.books().await;
     let progress_map = db::get_all_progress_map(&state.pool).await;
     let categories_map = db::get_all_book_categories_map(&state.pool).await;
 
-    let result = books
+    let result = catalog
+        .books()
         .iter()
         .cloned()
         .map(|mut book| {
@@ -221,7 +223,7 @@ pub async fn get_book_raw(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let book = find_book(&state, &id)?;
+    let book = find_book(&state, &id).await?;
     let path = book.path.clone();
 
     let mut file = tokio::fs::File::open(&path)
@@ -278,7 +280,7 @@ pub async fn get_book_cover(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let book = find_book(&state, &id)?;
+    let book = find_book(&state, &id).await?;
     let path = book.path.clone();
 
     let extracted = match book.format {
@@ -344,7 +346,7 @@ pub async fn save_book_progress(
     Path(id): Path<String>,
     Json(payload): Json<SaveProgressPayload>,
 ) -> Result<Json<ReadingProgress>, ApiError> {
-    find_book(&state, &id)?;
+    find_book(&state, &id).await?;
 
     let SaveProgressPayload {
         current_page,
@@ -441,7 +443,7 @@ pub async fn set_book_categories(
     Path(id): Path<String>,
     Json(payload): Json<SetBookCategoriesPayload>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    find_book(&state, &id)?;
+    find_book(&state, &id).await?;
     if payload.category_ids.len() > 100 {
         return Err(ApiError::bad_request(
             "Terlalu banyak koleksi dalam satu request",

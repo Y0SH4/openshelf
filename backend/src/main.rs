@@ -77,9 +77,20 @@ async fn main() {
         }
     }
 
+    let library = Arc::new(Library::new(roots));
+    // Scan pertama di background, supaya request pertama tidak menunggu
+    // (terasa saat buku ada di HDD yang sedang sleep).
+    {
+        let library = library.clone();
+        tokio::spawn(async move {
+            let count = library.books().await.books().len();
+            println!("📚 Scan awal selesai: {count} buku");
+        });
+    }
+
     let state = AppState {
         pool,
-        library: Arc::new(Library::new(roots)),
+        library,
         config: config.clone(),
     };
 

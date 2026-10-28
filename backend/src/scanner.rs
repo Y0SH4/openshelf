@@ -1,10 +1,10 @@
 use epub::doc::EpubDoc;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::Semaphore;
@@ -212,28 +212,94 @@ pub fn legacy_positional_ids(dir_path: &Path) -> Vec<(String, String)> {
 // Cache hasil scan
 // ---------------------------------------------------------------------------
 
-/// Daftar buku yang di-cache. Di-scan ulang jika:
-/// - daftar folder library berubah (`set_roots`) atau diminta (`invalidate`),
-/// - waktu modifikasi salah satu folder library berubah, atau
-/// - cache berumur lebih dari `MAX_AGE` (menangkap perubahan di sub-folder).
+/// Hasil satu kali scan: daftar buku + indeks ID → posisi.
+pub struct Catalog {
+    books: Vec<BookItem>,
+    by_id: HashMap<String, usize>,
+}
+
+impl Catalog {
+    fn new(books: Vec<BookItem>) -> Self {
+        let by_id = books
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.id.clone(), i))
+            .collect();
+        Catalog { books, by_id }
+    }
+
+    fn empty() -> Self {
+        Catalog::new(Vec::new())
+    }
+
+    pub fn books(&self) -> &[BookItem] {
+        &self.books
+    }
+
+    pub fn find(&self, id: &str) -> Option<&BookItem> {
+        self.by_id.get(id).map(|&i| &self.books[i])
+    }
+}
+
+/// Daftar buku yang di-cache.
+///
+/// Scan folder = I/O blocking yang bisa lama (ribuan file, HDD yang sedang
+/// sleep, NAS). Supaya tidak menahan thread worker Tokio:
+/// - Scan selalu berjalan di `spawn_blocking`.
+/// - Hanya satu scan dalam satu waktu (`scan_lock`); request lain menunggu
+///   dan memakai hasil yang sama.
+/// - Jika sudah ada hasil scan, request langsung dijawab dengan hasil itu.
+///   Pengecekan perubahan dilakukan di background (stale-while-revalidate):
+///   - tiap `CHECK_EVERY`: cek waktu modifikasi folder library, scan ulang
+///     jika berubah;
+///   - tiap `MAX_AGE`: scan ulang penuh (menangkap perubahan di sub-folder).
+/// - `set_roots` / `invalidate` membuang cache: request berikutnya menunggu
+///   scan baru (dipakai Settings, jadi hasilnya langsung terlihat).
 pub struct Library {
     roots: RwLock<Vec<LibraryRoot>>,
-    cache: RwLock<Option<Snapshot>>,
+    cache: RwLock<Option<Arc<Snapshot>>>,
+    /// Naik setiap `invalidate`, supaya scan yang dimulai sebelumnya tidak
+    /// menyimpan hasil lama ke cache.
+    generation: AtomicU64,
+    scan_lock: tokio::sync::Mutex<()>,
+    refreshing: AtomicBool,
 }
 
 struct Snapshot {
+    generation: u64,
     mtimes: Vec<Option<SystemTime>>,
     scanned_at: Instant,
-    books: Arc<Vec<BookItem>>,
+    checked_at: Instant,
+    catalog: Arc<Catalog>,
+}
+
+fn root_mtimes(roots: &[LibraryRoot]) -> Vec<Option<SystemTime>> {
+    roots
+        .iter()
+        .map(|r| fs::metadata(&r.path).and_then(|m| m.modified()).ok())
+        .collect()
+}
+
+/// Mengembalikan `refreshing` ke false walau refresh gagal / panic.
+struct RefreshGuard<'a>(&'a AtomicBool);
+
+impl Drop for RefreshGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl Library {
+    const CHECK_EVERY: Duration = Duration::from_secs(5);
     const MAX_AGE: Duration = Duration::from_secs(60);
 
     pub fn new(roots: Vec<LibraryRoot>) -> Self {
         Library {
             roots: RwLock::new(roots),
             cache: RwLock::new(None),
+            generation: AtomicU64::new(0),
+            scan_lock: tokio::sync::Mutex::new(()),
+            refreshing: AtomicBool::new(false),
         }
     }
 
@@ -247,34 +313,120 @@ impl Library {
     }
 
     pub fn invalidate(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
         *self.cache.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
-    pub fn books(&self) -> Arc<Vec<BookItem>> {
-        let roots = self.roots();
-        let mtimes: Vec<_> = roots
-            .iter()
-            .map(|r| fs::metadata(&r.path).and_then(|m| m.modified()).ok())
-            .collect();
-        {
-            let guard = self.cache.read().unwrap_or_else(|e| e.into_inner());
-            if let Some(snap) = guard.as_ref() {
-                if snap.mtimes == mtimes && snap.scanned_at.elapsed() < Self::MAX_AGE {
-                    return snap.books.clone();
-                }
-            }
-        }
-        let books = Arc::new(scan_roots(&roots));
-        *self.cache.write().unwrap_or_else(|e| e.into_inner()) = Some(Snapshot {
-            mtimes,
-            scanned_at: Instant::now(),
-            books: books.clone(),
-        });
-        books
+    /// Hasil scan yang masih berlaku (bukan dari sebelum `invalidate`).
+    fn snapshot(&self) -> Option<Arc<Snapshot>> {
+        let snap = self.cache.read().unwrap_or_else(|e| e.into_inner()).clone()?;
+        (snap.generation == self.generation.load(Ordering::Acquire)).then_some(snap)
     }
 
-    pub fn find(&self, id: &str) -> Option<BookItem> {
-        self.books().iter().find(|b| b.id == id).cloned()
+    fn store(&self, snap: Snapshot) {
+        if snap.generation == self.generation.load(Ordering::Acquire) {
+            *self.cache.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(snap));
+        }
+    }
+
+    pub async fn books(self: &Arc<Self>) -> Arc<Catalog> {
+        if let Some(snap) = self.snapshot() {
+            if snap.checked_at.elapsed() >= Self::CHECK_EVERY {
+                self.spawn_refresh();
+            }
+            return snap.catalog.clone();
+        }
+
+        // Belum ada hasil scan → harus menunggu. Satu scan saja; yang lain
+        // menunggu di lock lalu memakai hasilnya.
+        let _lock = self.scan_lock.lock().await;
+        if let Some(snap) = self.snapshot() {
+            return snap.catalog.clone();
+        }
+        let generation = self.generation.load(Ordering::Acquire);
+        let roots = self.roots();
+        let scanned = tokio::task::spawn_blocking(move || {
+            let mtimes = root_mtimes(&roots);
+            (mtimes, scan_roots(&roots))
+        })
+        .await;
+        let Ok((mtimes, books)) = scanned else {
+            eprintln!("❌ Scan library gagal (thread scan panic)");
+            return Arc::new(Catalog::empty());
+        };
+
+        let catalog = Arc::new(Catalog::new(books));
+        let now = Instant::now();
+        self.store(Snapshot {
+            generation,
+            mtimes,
+            scanned_at: now,
+            checked_at: now,
+            catalog: catalog.clone(),
+        });
+        catalog
+    }
+
+    pub async fn find(self: &Arc<Self>, id: &str) -> Option<BookItem> {
+        self.books().await.find(id).cloned()
+    }
+
+    /// Cek perubahan di background; tidak melakukan apa-apa jika sudah berjalan.
+    fn spawn_refresh(self: &Arc<Self>) {
+        if self
+            .refreshing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let _guard = RefreshGuard(&this.refreshing);
+            this.refresh().await;
+        });
+    }
+
+    async fn refresh(&self) {
+        let _lock = self.scan_lock.lock().await;
+        let Some(prev) = self.snapshot() else {
+            return; // di-invalidate; request berikutnya yang akan scan
+        };
+        if prev.checked_at.elapsed() < Self::CHECK_EVERY {
+            return; // baru saja dicek
+        }
+
+        let roots = self.roots();
+        let prev_mtimes = prev.mtimes.clone();
+        let full_rescan = prev.scanned_at.elapsed() >= Self::MAX_AGE;
+        let checked = tokio::task::spawn_blocking(move || {
+            let mtimes = root_mtimes(&roots);
+            let books = (full_rescan || mtimes != prev_mtimes).then(|| scan_roots(&roots));
+            (mtimes, books)
+        })
+        .await;
+        let Ok((mtimes, books)) = checked else {
+            eprintln!("❌ Scan ulang library gagal (thread scan panic)");
+            return;
+        };
+
+        let now = Instant::now();
+        self.store(match books {
+            Some(books) => Snapshot {
+                generation: prev.generation,
+                mtimes,
+                scanned_at: now,
+                checked_at: now,
+                catalog: Arc::new(Catalog::new(books)),
+            },
+            None => Snapshot {
+                generation: prev.generation,
+                mtimes,
+                scanned_at: prev.scanned_at,
+                checked_at: now,
+                catalog: prev.catalog.clone(),
+            },
+        });
     }
 }
 
@@ -511,14 +663,14 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn duplicate_relative_paths_get_unique_ids() {
+    #[tokio::test]
+    async fn duplicate_relative_paths_get_unique_ids() {
         let one = temp_dir("one");
         let two = temp_dir("two");
         fs::write(one.join("same.pdf"), b"x").unwrap();
         fs::write(two.join("same.pdf"), b"x").unwrap();
 
-        let lib = Library::new(vec![
+        let lib = Arc::new(Library::new(vec![
             LibraryRoot {
                 id: 1,
                 path: one.clone(),
@@ -527,21 +679,96 @@ mod tests {
                 id: 2,
                 path: two.clone(),
             },
-        ]);
-        let books = lib.books();
+        ]));
+        let catalog = lib.books().await;
+        let books = catalog.books();
         assert_eq!(books.len(), 2);
         assert_ne!(books[0].id, books[1].id);
         assert_eq!(books[0].id, book_id_for("same.pdf"));
         assert_eq!(books[1].id, book_id_for("2:same.pdf"));
-        assert!(lib.find(&books[1].id).is_some());
+        assert_eq!(lib.find(&books[1].id).await.unwrap().folder_id, 2);
+        assert!(lib.find("tidak-ada").await.is_none());
 
         lib.set_roots(vec![LibraryRoot {
             id: 1,
             path: one.clone(),
         }]);
-        assert_eq!(lib.books().len(), 1);
+        assert_eq!(lib.books().await.books().len(), 1);
 
         fs::remove_dir_all(&one).unwrap();
         fs::remove_dir_all(&two).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_requests_share_one_scan() {
+        let dir = temp_dir("flight");
+        fs::write(dir.join("a.pdf"), b"x").unwrap();
+        let lib = Arc::new(Library::new(vec![LibraryRoot {
+            id: 1,
+            path: dir.clone(),
+        }]));
+
+        let tasks: Vec<_> = (0..16)
+            .map(|_| {
+                let lib = lib.clone();
+                tokio::spawn(async move { lib.books().await })
+            })
+            .collect();
+        let mut results = Vec::new();
+        for t in tasks {
+            results.push(t.await.unwrap());
+        }
+        // Semua request memakai hasil scan yang sama (satu scan saja)
+        assert!(results.iter().all(|c| Arc::ptr_eq(c, &results[0])));
+        assert_eq!(results[0].books().len(), 1);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalidate_rescans_and_refresh_detects_changes() {
+        let dir = temp_dir("refresh");
+        fs::write(dir.join("a.pdf"), b"x").unwrap();
+        let lib = Arc::new(Library::new(vec![LibraryRoot {
+            id: 1,
+            path: dir.clone(),
+        }]));
+        let first = lib.books().await;
+        assert_eq!(first.books().len(), 1);
+
+        // Masih dalam CHECK_EVERY: hasil lama dipakai, tanpa menyentuh disk
+        fs::write(dir.join("b.pdf"), b"x").unwrap();
+        assert!(Arc::ptr_eq(&lib.books().await, &first));
+
+        // Scan ulang paksa (tombol Rescan di Settings) langsung terlihat
+        lib.invalidate();
+        assert_eq!(lib.books().await.books().len(), 2);
+
+        // Refresh di background: anggap sudah lewat CHECK_EVERY
+        fs::write(dir.join("c.pdf"), b"x").unwrap();
+        let snap = lib.snapshot().unwrap();
+        lib.store(Snapshot {
+            generation: snap.generation,
+            mtimes: vec![None], // seolah folder berubah
+            scanned_at: snap.scanned_at,
+            checked_at: Instant::now() - Library::CHECK_EVERY,
+            catalog: snap.catalog.clone(),
+        });
+        lib.refresh().await;
+        assert_eq!(lib.books().await.books().len(), 3);
+
+        // Refresh lama tidak boleh menimpa hasil setelah invalidate
+        let stale_generation = lib.snapshot().unwrap().generation;
+        lib.invalidate();
+        lib.store(Snapshot {
+            generation: stale_generation,
+            mtimes: Vec::new(),
+            scanned_at: Instant::now(),
+            checked_at: Instant::now(),
+            catalog: Arc::new(Catalog::empty()),
+        });
+        assert!(lib.snapshot().is_none());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
