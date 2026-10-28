@@ -2,102 +2,192 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * OpenShelf — Kindle / e-ink look
+ * Paper background, black ink, square corners, hairline rules, no shadows.
+ * Colors are HSL triplets consumed by tailwind.config.js.
+ */
 @layer base {
+  /* Paperwhite */
   :root {
-    --background: 45 20% 97%;
-    --foreground: 30 15% 12%;
+    --background: 45 14% 95%;
+    --foreground: 0 0% 7%;
 
-    --card: 45 15% 95%;
-    --card-foreground: 30 15% 12%;
+    --card: 45 14% 97%;
+    --card-foreground: 0 0% 7%;
 
-    --popover: 45 20% 97%;
-    --popover-foreground: 30 15% 12%;
+    --popover: 45 14% 97%;
+    --popover-foreground: 0 0% 7%;
 
-    --primary: 30 15% 15%;
-    --primary-foreground: 45 20% 98%;
+    --primary: 0 0% 7%;
+    --primary-foreground: 45 14% 97%;
 
-    --secondary: 40 10% 91%;
-    --secondary-foreground: 30 15% 15%;
+    --secondary: 40 8% 89%;
+    --secondary-foreground: 0 0% 7%;
 
-    --muted: 40 10% 91%;
-    --muted-foreground: 30 10% 45%;
+    --muted: 40 8% 89%;
+    --muted-foreground: 0 0% 38%;
 
-    --accent: 40 15% 90%;
-    --accent-foreground: 30 15% 15%;
+    --accent: 40 8% 87%;
+    --accent-foreground: 0 0% 7%;
 
-    --destructive: 0 70% 50%;
-    --destructive-foreground: 45 20% 98%;
+    --destructive: 0 0% 7%;
+    --destructive-foreground: 45 14% 97%;
 
-    --border: 40 10% 85%;
-    --input: 40 10% 85%;
-    --ring: 30 15% 20%;
+    --border: 0 0% 7%;
+    --rule: 40 6% 80%;
+    --input: 0 0% 7%;
+    --ring: 0 0% 7%;
 
-    --radius: 0.6rem;
+    --radius: 0px;
   }
 
-  .dark {
-    --background: 24 6% 10%;
-    --foreground: 40 15% 90%;
-
-    --card: 24 6% 14%;
-    --card-foreground: 40 15% 90%;
-
-    --popover: 24 6% 12%;
-    --popover-foreground: 40 15% 90%;
-
-    --primary: 40 15% 92%;
-    --primary-foreground: 24 6% 10%;
-
-    --secondary: 24 5% 18%;
-    --secondary-foreground: 40 15% 90%;
-
-    --muted: 24 5% 18%;
-    --muted-foreground: 40 10% 55%;
-
-    --accent: 24 5% 20%;
-    --accent-foreground: 40 15% 92%;
-
-    --destructive: 0 62% 40%;
-    --destructive-foreground: 40 15% 90%;
-
-    --border: 24 5% 22%;
-    --input: 24 5% 22%;
-    --ring: 40 15% 75%;
-  }
-
+  /* Warm sepia (Kindle "Sepia" page color) */
   .sepia {
-    --background: 40 45% 92%;
-    --foreground: 28 35% 18%;
+    --background: 39 45% 89%;
+    --foreground: 28 30% 14%;
 
-    --card: 40 40% 87%;
-    --card-foreground: 28 35% 18%;
+    --card: 39 48% 91%;
+    --card-foreground: 28 30% 14%;
 
-    --popover: 40 45% 92%;
-    --popover-foreground: 28 35% 18%;
+    --popover: 39 48% 92%;
+    --popover-foreground: 28 30% 14%;
 
-    --primary: 28 35% 22%;
-    --primary-foreground: 40 45% 96%;
+    --primary: 28 30% 14%;
+    --primary-foreground: 39 48% 92%;
 
-    --secondary: 38 30% 84%;
-    --secondary-foreground: 28 35% 18%;
+    --secondary: 37 32% 82%;
+    --secondary-foreground: 28 30% 14%;
 
-    --muted: 38 30% 84%;
-    --muted-foreground: 28 20% 45%;
+    --muted: 37 32% 82%;
+    --muted-foreground: 28 18% 38%;
 
-    --accent: 38 35% 82%;
-    --accent-foreground: 28 35% 18%;
+    --accent: 37 32% 80%;
+    --accent-foreground: 28 30% 14%;
 
-    --border: 36 25% 78%;
-    --input: 36 25% 78%;
-    --ring: 28 35% 25%;
+    --destructive: 28 30% 14%;
+    --destructive-foreground: 39 48% 92%;
+
+    --border: 28 30% 14%;
+    --rule: 36 24% 72%;
+    --input: 28 30% 14%;
+    --ring: 28 30% 14%;
+  }
+
+  /* Kindle dark mode: true black, soft white ink */
+  .dark {
+    --background: 0 0% 4%;
+    --foreground: 40 6% 86%;
+
+    --card: 0 0% 6%;
+    --card-foreground: 40 6% 86%;
+
+    --popover: 0 0% 8%;
+    --popover-foreground: 40 6% 86%;
+
+    --primary: 40 6% 86%;
+    --primary-foreground: 0 0% 4%;
+
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 40 6% 86%;
+
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 58%;
+
+    --accent: 0 0% 16%;
+    --accent-foreground: 40 6% 90%;
+
+    --destructive: 40 6% 86%;
+    --destructive-foreground: 0 0% 4%;
+
+    --border: 40 6% 80%;
+    --rule: 0 0% 20%;
+    --input: 40 6% 80%;
+    --ring: 40 6% 86%;
   }
 }
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-rule;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
   }
   body {
-    @apply bg-background text-foreground font-sans transition-colors duration-200;
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  ::selection {
+    @apply bg-foreground text-background;
+  }
+  /* E-ink screens don't animate; keep focus rings crisp instead. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--foreground));
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Thin Kindle-style section rule */
+  .eink-rule {
+    @apply border-t border-rule;
+  }
+
+  /* Inverted "selected" state used across chips, tabs and menus */
+  .eink-selected {
+    @apply bg-foreground text-background;
+  }
+
+  /* Kindle page scrubber */
+  .eink-range {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 20px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .eink-range::-webkit-slider-runnable-track {
+    height: 2px;
+    background: linear-gradient(
+      to right,
+      hsl(var(--foreground)) 0%,
+      hsl(var(--foreground)) var(--fill, 0%),
+      hsl(var(--rule)) var(--fill, 0%),
+      hsl(var(--rule)) 100%
+    );
+  }
+  .eink-range::-moz-range-track {
+    height: 2px;
+    background: hsl(var(--rule));
+  }
+  .eink-range::-moz-range-progress {
+    height: 2px;
+    background: hsl(var(--foreground));
+  }
+  .eink-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -6px;
+    border-radius: 9999px;
+    background: hsl(var(--background));
+    border: 2px solid hsl(var(--foreground));
+  }
+  .eink-range::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: hsl(var(--background));
+    border: 2px solid hsl(var(--foreground));
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }

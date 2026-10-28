@@ -1,340 +1,426 @@
-import { useEffect, useState } from "react";
-import {
-  BookOpen,
-  Search,
-  ArrowLeft,
-  Sun,
-  Moon,
-  BookA,
-  Library,
-  FileText,
-  Bookmark,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { useEffect, useMemo, useState, useCallback } from "react"
+import { BookCard } from "@/components/library/BookCard"
+import type { Book } from "@/components/library/BookCard"
+import { LibraryHeader } from "@/components/library/LibraryHeader"
+import type {
+  ThemeMode,
+  FormatFilter,
+  SortMode,
+  ViewMode,
+} from "@/components/library/LibraryHeader"
+import { CategoryFilterBar } from "@/components/library/CategoryFilterBar"
+import type { CategoryItem } from "@/components/library/CategoryFilterBar"
+import { AssignCategoryModal } from "@/components/library/AssignCategoryModal"
+import { ReaderView } from "@/components/reader/ReaderView"
+import { LoginScreen } from "@/components/auth/LoginScreen"
+import { SettingsView } from "@/components/settings/SettingsView"
+import { apiFetch, UNAUTHORIZED_EVENT, type AuthStatus } from "@/lib/api"
 
-interface Book {
-  id: string;
-  title: string;
-  file_name: string;
-  format: "pdf" | "epub";
+// localStorage can throw (private mode, blocked storage) — never let that break the app.
+function readPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
+  try {
+    const v = localStorage.getItem(key) as T | null
+    return v && allowed.includes(v) ? v : fallback
+  } catch {
+    return fallback
+  }
+}
+function writePref(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // ignore
+  }
 }
 
-type ThemeMode = "light" | "sepia" | "dark";
+const THEME_COLORS: Record<ThemeMode, string> = {
+  light: "#f6f5f1",
+  sepia: "#f1e6cf",
+  dark: "#0a0a0a",
+}
+
+type AuthState =
+  | { status: "checking" }
+  | { status: "offline" }
+  | { status: "setup" }
+  | { status: "login" }
+  | { status: "ready"; username: string }
 
 export default function App() {
-  const [books, setBooks] = useState<Book[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null);
-  const [search, setSearch] = useState("");
-  const [formatFilter, setFormatFilter] = useState<"all" | "pdf" | "epub">(
-    "all",
-  );
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    return (localStorage.getItem("openshelf_theme") as ThemeMode) || "light";
-  });
+  const [auth, setAuth] = useState<AuthState>({ status: "checking" })
+  const [view, setView] = useState<"library" | "settings">("library")
+  const [books, setBooks] = useState<Book[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [selectedBook, setSelectedBook] = useState<Book | null>(null)
+  const [managingBook, setManagingBook] = useState<Book | null>(null)
+  const [search, setSearch] = useState("")
+  const [formatFilter, setFormatFilter] = useState<FormatFilter>("all")
+  const [categories, setCategories] = useState<CategoryItem[]>([])
+  const [selectedCategory, setSelectedCategory] = useState<string>("all")
+  const [theme, setTheme] = useState<ThemeMode>(() =>
+    readPref("openshelf_theme", "light", ["light", "sepia", "dark"] as const)
+  )
+  const [sortMode, setSortMode] = useState<SortMode>(() =>
+    readPref("openshelf_sort", "title", ["title", "progress", "file"] as const)
+  )
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    readPref("openshelf_view", "grid", ["grid", "list"] as const)
+  )
 
+  // Theme → <html> class + browser chrome color
   useEffect(() => {
-    const root = document.documentElement;
-    root.classList.remove("dark", "sepia");
-    if (theme === "dark") root.classList.add("dark");
-    if (theme === "sepia") root.classList.add("sepia");
-    localStorage.setItem("openshelf_theme", theme);
-  }, [theme]);
+    const root = document.documentElement
+    root.classList.remove("dark", "sepia")
+    if (theme === "dark") root.classList.add("dark")
+    if (theme === "sepia") root.classList.add("sepia")
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", THEME_COLORS[theme])
+    writePref("openshelf_theme", theme)
+  }, [theme])
 
-  useEffect(() => {
-    fetch("/api/books")
-      .then((res) => res.json())
-      .then((data) => {
-        setBooks(data);
-        setLoading(false);
+  useEffect(() => writePref("openshelf_sort", sortMode), [sortMode])
+  useEffect(() => writePref("openshelf_view", viewMode), [viewMode])
+
+  const fetchBooks = useCallback(() => {
+    apiFetch("/api/books")
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then((data: Book[]) => {
+        setBooks(data)
+        setLoadError(false)
+        setLoading(false)
       })
       .catch((err) => {
-        console.error("Gagal mengambil daftar buku:", err);
-        setLoading(false);
-      });
-  }, []);
+        console.error("Gagal mengambil daftar buku:", err)
+        setLoadError(true)
+        setLoading(false)
+      })
+  }, [])
 
-  const filteredBooks = books.filter((b) => {
-    const matchesSearch = b.title.toLowerCase().includes(search.toLowerCase());
-    const matchesFormat = formatFilter === "all" || b.format === formatFilter;
-    return matchesSearch && matchesFormat;
-  });
+  const fetchCategories = useCallback(() => {
+    apiFetch("/api/categories")
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then((data: CategoryItem[]) => setCategories(data))
+      .catch((err) => console.error("Gagal mengambil daftar kategori:", err))
+  }, [])
 
+  // 1. Who am I? (setup needed / signed in / signed out)
+  const checkAuth = useCallback(() => {
+    fetch("/api/auth/status", { credentials: "same-origin" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then((data: AuthStatus) => {
+        if (data.user) setAuth({ status: "ready", username: data.user.username })
+        else setAuth({ status: data.setup_required ? "setup" : "login" })
+      })
+      .catch(() => setAuth({ status: "offline" }))
+  }, [])
+
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
+
+  // 2. Session expired / signed out elsewhere → back to the sign-in page
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setSelectedBook(null)
+      setManagingBook(null)
+      setAuth((prev) => (prev.status === "ready" ? { status: "login" } : prev))
+    }
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+  }, [])
+
+  // 3. Load the library once signed in
+  const isReady = auth.status === "ready"
+  useEffect(() => {
+    if (!isReady) return
+    setLoading(true)
+    fetchBooks()
+    fetchCategories()
+  }, [isReady, fetchBooks, fetchCategories])
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" })
+    } catch {
+      // Even if the server is unreachable, leave the library locally
+    }
+    setSelectedBook(null)
+    setManagingBook(null)
+    setBooks([])
+    setCategories([])
+    setView("library")
+    setAuth({ status: "login" })
+  }, [])
+
+  const openSettings = useCallback(() => setView("settings"), [])
+  const closeSettings = useCallback(() => {
+    setView("library")
+    // Folders may have changed → reload the shelf
+    fetchBooks()
+    fetchCategories()
+  }, [fetchBooks, fetchCategories])
+
+  // Filter + sort, memoized: O(N log N) only when inputs change
+  const filteredBooks = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    const result = books.filter((b) => {
+      const matchesSearch = query === "" || b.title.toLowerCase().includes(query)
+      const matchesFormat = formatFilter === "all" || b.format === formatFilter
+      const matchesCategory =
+        selectedCategory === "all" ||
+        (b.categories?.includes(selectedCategory) ?? false)
+      return matchesSearch && matchesFormat && matchesCategory
+    })
+
+    const byTitle = (a: Book, b: Book) =>
+      a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true })
+
+    if (sortMode === "title") result.sort(byTitle)
+    else if (sortMode === "file")
+      result.sort((a, b) => a.file_name.localeCompare(b.file_name, undefined, { numeric: true }))
+    else
+      result.sort(
+        (a, b) =>
+          (b.progress?.progress_percent ?? 0) - (a.progress?.progress_percent ?? 0) ||
+          byTitle(a, b)
+      )
+    return result
+  }, [books, search, formatFilter, selectedCategory, sortMode])
+
+  const handleCategoryCreated = useCallback((newCat: CategoryItem) => {
+    setCategories((prev) =>
+      [...prev, newCat].sort((a, b) => a.name.localeCompare(b.name))
+    )
+  }, [])
+
+  const handleBookCategoriesUpdated = useCallback(
+    (bookId: string, updatedCategoryNames: string[]) => {
+      setBooks((prev) =>
+        prev.map((b) =>
+          b.id === bookId ? { ...b, categories: updatedCategoryNames } : b
+        )
+      )
+      fetchCategories() // refresh counts
+    },
+    [fetchCategories]
+  )
+
+  const handleProgressSaved = useCallback(
+    (
+      bookId: string,
+      currentPage: number,
+      totalPages: number,
+      progressPercent: number
+    ) => {
+      setBooks((prev) =>
+        prev.map((b) =>
+          b.id === bookId
+            ? {
+                ...b,
+                progress: {
+                  current_page: currentPage,
+                  total_pages: totalPages,
+                  progress_percent: progressPercent,
+                },
+              }
+            : b
+        )
+      )
+    },
+    []
+  )
+
+  const closeManaging = useCallback(() => setManagingBook(null), [])
+
+  // Sign-in gate
+  if (auth.status === "checking") {
+    return <div className="min-h-[100dvh] bg-background" aria-busy="true" />
+  }
+  if (auth.status === "offline") {
+    return (
+      <div className="min-h-[100dvh] bg-background text-foreground flex items-center justify-center p-6">
+        <div className="max-w-sm w-full text-center border border-foreground p-8">
+          <p className="font-serif text-xl font-bold">Can't reach OpenShelf</p>
+          <p className="text-sm text-muted-foreground mt-2">
+            Make sure the backend is running on port 3000.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setAuth({ status: "checking" })
+              checkAuth()
+            }}
+            className="mt-5 h-10 px-5 border border-foreground hover:bg-accent text-sm font-medium"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    )
+  }
+  if (auth.status !== "ready") {
+    return (
+      <LoginScreen
+        key={auth.status}
+        mode={auth.status}
+        onSuccess={(username) => setAuth({ status: "ready", username })}
+      />
+    )
+  }
+
+  // Settings page
+  if (view === "settings") {
+    return (
+      <SettingsView
+        username={auth.username}
+        theme={theme}
+        onThemeChange={setTheme}
+        onBack={closeSettings}
+        onLogout={handleLogout}
+      />
+    )
+  }
+
+  // Reading mode
   if (selectedBook) {
     return (
-      <div className="flex flex-col h-screen bg-background text-foreground transition-colors duration-200 select-none">
-        {/* Bilah Navigasi Atas ala Kindle */}
-        <header className="h-14 border-b border-border/80 px-4 md:px-8 flex items-center justify-between bg-card/70 backdrop-blur-sm z-10">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelectedBook(null)}
-              className="gap-2 font-medium"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Library</span>
-            </Button>
-            <div className="h-4 w-px bg-border hidden sm:block" />
-            <div className="max-w-[280px] sm:max-w-md truncate">
-              <h1 className="text-sm font-serif font-semibold truncate">
-                {selectedBook.title}
-              </h1>
-              <p className="text-[11px] text-muted-foreground truncate font-mono">
-                {selectedBook.file_name}
-              </p>
-            </div>
-          </div>
-
-          {/* Pengaturan Cepat Tampilan Baca ("Aa" Kindle) */}
-          <div className="flex items-center gap-1.5">
-            <div className="flex items-center bg-secondary/80 rounded-md p-0.5 border border-border/50 text-xs">
-              <button
-                onClick={() => setTheme("light")}
-                className={`px-2.5 py-1 rounded transition-colors ${
-                  theme === "light"
-                    ? "bg-background text-foreground shadow-sm font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Paperwhite Light"
-              >
-                Paper
-              </button>
-              <button
-                onClick={() => setTheme("sepia")}
-                className={`px-2.5 py-1 rounded transition-colors ${
-                  theme === "sepia"
-                    ? "bg-amber-100 dark:bg-amber-900/40 text-amber-950 dark:text-amber-100 shadow-sm font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Sepia Warm"
-              >
-                Sepia
-              </button>
-              <button
-                onClick={() => setTheme("dark")}
-                className={`px-2.5 py-1 rounded transition-colors ${
-                  theme === "dark"
-                    ? "bg-background text-foreground shadow-sm font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Kindle Dark"
-              >
-                Dark
-              </button>
-            </div>
-
-            <Badge variant="kindle" className="ml-2 hidden md:inline-flex">
-              {selectedBook.format}
-            </Badge>
-          </div>
-        </header>
-
-        {/* Reader Container */}
-        <main className="flex-1 w-full bg-background relative overflow-hidden">
-          <iframe
-            src={`/api/books/${selectedBook.id}/raw`}
-            className="w-full h-full border-none"
-            title={selectedBook.title}
-          />
-        </main>
-
-        {/* Bilah Navigasi Bawah ala Kindle */}
-        <footer className="h-8 border-t border-border/60 px-6 flex items-center justify-between text-[11px] text-muted-foreground bg-card/40">
-          <span className="flex items-center gap-1.5 font-serif italic">
-            <BookOpen className="w-3.5 h-3.5" /> OpenShelf Reader
-          </span>
-          <span className="font-mono">
-            {selectedBook.format.toUpperCase()} Document
-          </span>
-        </footer>
-      </div>
-    );
+      <ReaderView
+        key={selectedBook.id}
+        book={selectedBook}
+        onClose={() => setSelectedBook(null)}
+        theme={theme}
+        onThemeChange={setTheme}
+        onProgressSaved={handleProgressSaved}
+      />
+    )
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground transition-colors duration-200">
-      {/* Top Header */}
-      <header className="border-b border-border/80 sticky top-0 bg-background/90 backdrop-blur-md z-20">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shadow-sm">
-              <BookOpen className="w-4 h-4" />
-            </div>
-            <div>
-              <h1 className="text-lg font-serif font-bold tracking-tight leading-none">
-                OpenShelf
-              </h1>
-              <span className="text-[10px] text-muted-foreground tracking-wider uppercase font-mono">
-                Homeserver Library
-              </span>
-            </div>
-          </div>
+    <div className="min-h-screen bg-background text-foreground">
+      <LibraryHeader
+        search={search}
+        onSearchChange={setSearch}
+        formatFilter={formatFilter}
+        onFormatFilterChange={setFormatFilter}
+        totalBooks={books.length}
+        filteredCount={filteredBooks.length}
+        theme={theme}
+        onThemeChange={setTheme}
+        sortMode={sortMode}
+        onSortChange={setSortMode}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        username={auth.username}
+        onLogout={handleLogout}
+        onOpenSettings={openSettings}
+      />
 
-          <div className="relative flex-1 max-w-md hidden sm:block">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Search your library..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 bg-card border-border/80 text-sm focus-visible:ring-primary/40 font-serif"
-            />
-          </div>
+      <CategoryFilterBar
+        categories={categories}
+        selectedCategory={selectedCategory}
+        onSelectCategory={setSelectedCategory}
+        onCategoryCreated={handleCategoryCreated}
+        totalBooksCount={books.length}
+      />
 
-          {/* Theme switcher */}
-          <div className="flex items-center gap-2">
-            <div className="flex bg-card rounded-lg p-1 border border-border/80 shadow-sm">
-              <button
-                onClick={() => setTheme("light")}
-                className={`p-1.5 rounded-md transition-colors ${
-                  theme === "light"
-                    ? "bg-secondary text-foreground shadow-xs"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Paperwhite Light"
-              >
-                <Sun className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setTheme("sepia")}
-                className={`p-1.5 rounded-md transition-colors ${
-                  theme === "sepia"
-                    ? "bg-amber-100 text-amber-950 shadow-xs"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Warm Sepia"
-              >
-                <BookA className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setTheme("dark")}
-                className={`p-1.5 rounded-md transition-colors ${
-                  theme === "dark"
-                    ? "bg-secondary text-foreground shadow-xs"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Kindle Dark"
-              >
-                <Moon className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="px-6 pb-3 sm:hidden">
-          <div className="relative w-full">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Search books..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 bg-card"
-            />
-          </div>
-        </div>
-
-        <div className="max-w-7xl mx-auto px-6 border-t border-border/40 flex items-center justify-between text-xs overflow-x-auto py-2">
-          <div className="flex items-center gap-1 font-medium">
-            <button
-              onClick={() => setFormatFilter("all")}
-              className={`px-3 py-1.5 rounded-md transition-all ${
-                formatFilter === "all"
-                  ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-              }`}
-            >
-              All ({books.length})
-            </button>
-            <button
-              onClick={() => setFormatFilter("pdf")}
-              className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
-                formatFilter === "pdf"
-                  ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" /> PDFs
-            </button>
-            <button
-              onClick={() => setFormatFilter("epub")}
-              className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
-                formatFilter === "epub"
-                  ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" /> EPUBs
-            </button>
-          </div>
-
-          <span className="text-[11px] text-muted-foreground font-serif italic hidden md:inline">
-            Showing {filteredBooks.length} items
-          </span>
-        </div>
-      </header>
-
-      {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 pb-16">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-sm font-serif text-muted-foreground">
-              Scanning your homeserver library...
+          <div className="py-24 text-center">
+            <p className="font-serif text-lg">Loading your library…</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Scanning books and reading progress
             </p>
+          </div>
+        ) : loadError ? (
+          <div className="py-20 text-center border border-foreground px-6">
+            <p className="font-serif text-xl font-bold">Can't reach OpenShelf</p>
+            <p className="text-sm text-muted-foreground mt-2">
+              Make sure the backend is running on port 3000.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true)
+                fetchBooks()
+                fetchCategories()
+              }}
+              className="mt-5 h-10 px-5 border border-foreground hover:bg-accent text-sm font-medium"
+            >
+              Try again
+            </button>
+          </div>
+        ) : books.length === 0 ? (
+          <div className="py-20 text-center border border-dashed border-foreground/60 px-6">
+            <p className="font-serif text-2xl font-bold">Your library is empty</p>
+            <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto">
+              Choose the folder where you keep your PDF and EPUB files. OpenShelf will
+              scan it and its sub-folders.
+            </p>
+            <button
+              type="button"
+              onClick={openSettings}
+              className="mt-6 h-11 px-6 eink-selected text-sm font-semibold hover:opacity-90"
+            >
+              Add a folder
+            </button>
           </div>
         ) : filteredBooks.length === 0 ? (
-          <div className="text-center py-20 border border-dashed border-border rounded-xl bg-card/40">
-            <Library className="w-10 h-10 mx-auto text-muted-foreground/60 mb-3" />
-            <h3 className="text-base font-serif font-semibold">
-              No books found
-            </h3>
-            <p className="text-xs text-muted-foreground mt-1">
+          <div className="py-20 text-center">
+            <p className="font-serif text-xl font-bold">No items</p>
+            <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto">
               {search
-                ? `No books matching "${search}"`
-                : "No files found in the books folder."}
+                ? `Nothing in your library matches “${search}”.`
+                : selectedCategory !== "all"
+                ? `“${selectedCategory}” is empty. Use ⋮ on a book to add it.`
+                : "No books match these filters."}
             </p>
           </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 md:gap-7">
+        ) : viewMode === "list" ? (
+          <div className="border-t border-rule">
             {filteredBooks.map((book) => (
-              <div
+              <BookCard
                 key={book.id}
-                onClick={() => setSelectedBook(book)}
-                className="group cursor-pointer flex flex-col transition-all duration-200"
-              >
-                <div className="relative aspect-[3/4] w-full rounded-md border border-border/80 bg-card overflow-hidden shadow-xs transition-all duration-200 group-hover:-translate-y-1.5 group-hover:shadow-md group-hover:border-primary/50">
-                  <img
-                    src={`/api/books/${book.id}/cover`}
-                    alt={book.title}
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-
-                  <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-black/20 to-transparent pointer-events-none" />
-
-                  <div className="absolute top-2 right-2 z-10">
-                    <Badge variant="kindle">{book.format}</Badge>
-                  </div>
-                </div>
-
-                {/* Book Title below cover */}
-                <div className="mt-2.5 px-0.5">
-                  <h4 className="text-xs font-serif font-medium line-clamp-2 leading-relaxed text-foreground/90 group-hover:text-primary transition-colors">
-                    {book.title}
-                  </h4>
-                  <p className="text-[10px] text-muted-foreground font-mono truncate mt-0.5">
-                    {book.file_name}
-                  </p>
-                </div>
-              </div>
+                book={book}
+                variant="list"
+                onSelect={setSelectedBook}
+                onManageCategories={setManagingBook}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-5 gap-y-8">
+            {filteredBooks.map((book) => (
+              <BookCard
+                key={book.id}
+                book={book}
+                variant="grid"
+                onSelect={setSelectedBook}
+                onManageCategories={setManagingBook}
+              />
             ))}
           </div>
         )}
       </main>
+
+      <AssignCategoryModal
+        book={managingBook}
+        categories={categories}
+        isOpen={!!managingBook}
+        onClose={closeManaging}
+        onSaved={handleBookCategoriesUpdated}
+        onCategoryCreated={handleCategoryCreated}
+      />
     </div>
-  );
+  )
 }

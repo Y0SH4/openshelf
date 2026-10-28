@@ -4,10 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Login: hash password
+argon2 = "0.5"
+# Sumber angka acak (OsRng) untuk salt password & token session.
+# Fitur "getrandom" wajib; argon2 tidak menyalakannya secara default.
+rand_core = { version = "0.6", features = ["getrandom"] }
+# SHA-256 untuk token session yang disimpan di database
+sha2 = "0.10"
 axum = "0.8.9"
 epub = "2.1.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1.53.2", features = ["full"] }
+# Stream file buku ke browser
+tokio-util = { version = "0.7", features = ["io"] }
 tower-http = { version = "0.7.1", features = ["cors"] }

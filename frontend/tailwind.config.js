@@ -9,6 +9,7 @@ export default {
     extend: {
       colors: {
         border: "hsl(var(--border))",
+        rule: "hsl(var(--rule))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
@@ -41,23 +42,23 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        kindle: {
-          paper: "#f7f6f2",
-          parchment: "#f1ede4",
-          sepia: "#f4ecd8",
-          ink: "#111110",
-          charcoal: "#1c1b1a",
-          surface: "#242322",
-        },
       },
       borderRadius: {
         lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        md: "var(--radius)",
+        sm: "var(--radius)",
       },
       fontFamily: {
-        serif: ["Merriweather", "Georgia", "Bookerly", "serif"],
-        sans: ["system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
+        serif: ["Literata", "Bookerly", "Georgia", "Cambria", "serif"],
+        sans: [
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "Roboto",
+          "Helvetica Neue",
+          "sans-serif",
+        ],
       },
     },
   },
