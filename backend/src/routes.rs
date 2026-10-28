@@ -19,6 +19,7 @@ use crate::db::{
     SaveProgressPayload, SetBookCategoriesPayload,
 };
 use crate::scanner::{self, BookFormat, BookItem, Library};
+use crate::security::LoginLimiter;
 
 // ---------------------------------------------------------------------------
 // State & error
@@ -29,6 +30,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub library: Arc<Library>,
     pub config: Arc<Config>,
+    pub login_limiter: Arc<LoginLimiter>,
 }
 
 /// Handler yang hanya butuh database tetap bisa memakai `State<SqlitePool>`.

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react"
 import { ChevronRight, CornerLeftUp, Folder, X } from "lucide-react"
 import { apiFetch, readError, type BrowseResult } from "@/lib/api"
+import { cn } from "@/lib/utils"
 
 interface FolderBrowserProps {
   onClose: () => void
@@ -126,6 +127,28 @@ export const FolderBrowser: React.FC<FolderBrowserProps> = ({ onClose, onSelect 
             Go
           </button>
         </form>
+
+        {/* Allowed top-level folders (e.g. home, /mnt) — "Up" stops at these */}
+        {data && data.roots.length > 1 && (
+          <div className="flex gap-2 overflow-x-auto px-5 py-2 border-b border-rule">
+            {data.roots.map((root) => (
+              <button
+                key={root}
+                type="button"
+                onClick={() => open(root)}
+                disabled={loading}
+                className={cn(
+                  "h-8 px-3 shrink-0 border text-xs font-mono",
+                  data.path === root || data.path.startsWith(`${root}/`)
+                    ? "eink-selected border-foreground"
+                    : "border-rule hover:bg-accent"
+                )}
+              >
+                {root}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Folder list */}
         <div className="flex-1 min-h-[240px] overflow-y-auto">

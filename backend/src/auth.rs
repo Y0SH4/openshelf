@@ -7,7 +7,7 @@
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::{
     Json,
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -15,9 +15,13 @@ use axum::{
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
+use std::sync::LazyLock;
+use std::time::Duration;
 
 use crate::db;
 use crate::routes::{ApiError, AppState};
+use crate::security;
 
 pub const SESSION_COOKIE: &str = "openshelf_session";
 pub const SESSION_TTL_SECS: i64 = 30 * 24 * 60 * 60; // 30 hari
@@ -212,34 +216,68 @@ pub async fn setup(
     start_session(&state, id, username).await
 }
 
+/// Hash Argon2 cadangan untuk username yang tidak ada. Password tetap dicek
+/// terhadap hash ini, supaya waktu respons sama dengan username yang ada;
+/// tanpa ini, username bisa ditebak dari cepat-lambatnya jawaban.
+static DUMMY_HASH: LazyLock<String> =
+    LazyLock::new(|| hash_password("openshelf-dummy-password").unwrap_or_default());
+
+/// Membuat `DUMMY_HASH` saat start (blocking — panggil lewat `spawn_blocking`).
+pub fn warm_up() {
+    LazyLock::force(&DUMMY_HASH);
+}
+
+fn too_many_attempts(wait: Duration) -> Response {
+    let minutes = wait.as_secs().div_ceil(60).max(1);
+    let mut res = (
+        StatusCode::TOO_MANY_REQUESTS,
+        format!(
+            "Too many sign-in attempts. Try again in {minutes} minute{}.",
+            if minutes == 1 { "" } else { "s" }
+        ),
+    )
+        .into_response();
+    if let Ok(v) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
+        res.headers_mut().insert(header::RETRY_AFTER, v);
+    }
+    res
+}
+
 /// POST /api/auth/login
+/// Maksimal 5 percobaan gagal per IP per 15 menit (lihat `security.rs`).
 pub async fn login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(payload): Json<Credentials>,
 ) -> Result<Response, ApiError> {
+    let ip = security::client_ip(&headers, peer, state.config.trust_proxy);
+    if let Err(wait) = state.login_limiter.begin(ip) {
+        return Ok(too_many_attempts(wait));
+    }
+
     let user = db::find_user(&state.pool, payload.username.trim())
         .await
         .map_err(|e| ApiError::internal("Failed to read accounts", e))?;
 
-    let Some(user) = user else {
+    let password = payload.password;
+    let hash = user
+        .as_ref()
+        .map(|u| u.password_hash.clone())
+        .unwrap_or_else(|| DUMMY_HASH.clone());
+    let password_ok = tokio::task::spawn_blocking(move || verify_password(&password, &hash))
+        .await
+        .unwrap_or(false);
+
+    let Some(user) = user.filter(|_| password_ok) else {
+        eprintln!("⚠️  Login gagal dari {ip}");
         return Err(ApiError(
             StatusCode::UNAUTHORIZED,
             "Wrong username or password".into(),
         ));
     };
 
-    let password = payload.password;
-    let hash = user.password_hash.clone();
-    let ok = tokio::task::spawn_blocking(move || verify_password(&password, &hash))
-        .await
-        .unwrap_or(false);
-    if !ok {
-        return Err(ApiError(
-            StatusCode::UNAUTHORIZED,
-            "Wrong username or password".into(),
-        ));
-    }
-
+    state.login_limiter.success(ip);
     let _ = db::delete_expired_sessions(&state.pool).await;
     start_session(&state, user.id, user.username).await
 }

@@ -75,6 +75,27 @@ async fn folder_infos(state: &AppState) -> Vec<FolderInfo> {
         .collect()
 }
 
+/// Folder yang boleh dijelajahi / ditambahkan (`OPENSHELF_BROWSE_ROOTS`).
+/// `path` harus sudah di-canonicalize, supaya symlink & `..` tidak bisa keluar.
+pub fn is_allowed(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
+}
+
+fn outside_roots(roots: &[PathBuf]) -> ApiError {
+    let list: Vec<_> = roots.iter().map(|r| r.display().to_string()).collect();
+    ApiError(
+        StatusCode::FORBIDDEN,
+        if list.is_empty() {
+            "Choosing folders is turned off on this server (OPENSHELF_BROWSE_ROOTS)".into()
+        } else {
+            format!(
+                "OpenShelf can only use folders inside: {}. Set OPENSHELF_BROWSE_ROOTS to allow more.",
+                list.join(", ")
+            )
+        },
+    )
+}
+
 /// "~/Books" → "/home/me/Books"
 fn expand_home(input: &str) -> PathBuf {
     match (input.strip_prefix('~'), std::env::var_os("HOME")) {
@@ -110,6 +131,9 @@ pub async fn add(
         .map_err(|_| ApiError::bad_request("Folder not found"))?;
     if !path.is_dir() {
         return Err(ApiError::bad_request("That path is a file, not a folder"));
+    }
+    if !is_allowed(&path, &state.config.browse_roots) {
+        return Err(outside_roots(&state.config.browse_roots));
     }
 
     // Folder di dalam folder lain akan di-scan dua kali → tolak
@@ -195,11 +219,14 @@ pub struct BrowseResult {
     pub folders: Vec<DirEntry>,
     /// Jumlah file PDF/EPUB langsung di folder ini (petunjuk untuk user)
     pub book_files: usize,
+    /// Folder teratas yang boleh dijelajahi (pintasan di dialog)
+    pub roots: Vec<String>,
 }
 
 const MAX_BROWSE_ENTRIES: usize = 2000;
 
-pub fn browse_dir(path: &Path) -> Result<BrowseResult, String> {
+/// Isi satu folder. `parent` = None jika naik satu level sudah di luar `roots`.
+pub fn browse_dir(path: &Path, roots: &[PathBuf]) -> Result<BrowseResult, String> {
     let entries = fs::read_dir(path).map_err(|e| format!("Can't open folder: {e}"))?;
     let mut folders = Vec::new();
     let mut book_files = 0;
@@ -225,20 +252,35 @@ pub fn browse_dir(path: &Path) -> Result<BrowseResult, String> {
     folders.sort_by_key(|f| f.name.to_lowercase());
     Ok(BrowseResult {
         path: path.to_string_lossy().to_string(),
-        parent: path.parent().map(|p| p.to_string_lossy().to_string()),
+        parent: path
+            .parent()
+            .filter(|p| is_allowed(p, roots))
+            .map(|p| p.to_string_lossy().to_string()),
         folders,
         book_files,
+        roots: roots
+            .iter()
+            .map(|r| r.to_string_lossy().to_string())
+            .collect(),
     })
 }
 
 /// GET /api/fs/browse?path=...
-/// Tanpa `path`: mulai dari folder home user yang menjalankan server.
-pub async fn browse(Query(query): Query<BrowseQuery>) -> Result<Json<BrowseResult>, ApiError> {
+/// Tanpa `path`: mulai dari folder home user yang menjalankan server (jika
+/// diizinkan), atau folder pertama di `OPENSHELF_BROWSE_ROOTS`.
+pub async fn browse(
+    State(state): State<AppState>,
+    Query(query): Query<BrowseQuery>,
+) -> Result<Json<BrowseResult>, ApiError> {
+    let roots = state.config.browse_roots.clone();
     let start = match query.path.as_deref().map(str::trim) {
         Some(p) if !p.is_empty() => expand_home(p),
         _ => std::env::var_os("HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/")),
+            .and_then(|h| h.canonicalize().ok())
+            .filter(|h| is_allowed(h, &roots))
+            .or_else(|| roots.first().cloned())
+            .ok_or_else(|| outside_roots(&roots))?,
     };
     if !start.is_absolute() {
         return Err(ApiError::bad_request(
@@ -251,8 +293,11 @@ pub async fn browse(Query(query): Query<BrowseQuery>) -> Result<Json<BrowseResul
     if !path.is_dir() {
         return Err(ApiError::bad_request("That path is a file, not a folder"));
     }
+    if !is_allowed(&path, &roots) {
+        return Err(outside_roots(&roots));
+    }
 
-    tokio::task::spawn_blocking(move || browse_dir(&path))
+    tokio::task::spawn_blocking(move || browse_dir(&path, &roots))
         .await
         .map_err(|e| ApiError::internal("Failed to read folder", e))?
         .map(Json)
@@ -274,13 +319,33 @@ mod tests {
         fs::write(dir.join("two.EPUB"), b"x").unwrap();
         fs::write(dir.join("notes.txt"), b"x").unwrap();
 
-        let res = browse_dir(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let parent = dir.parent().unwrap().to_path_buf();
+        let res = browse_dir(&dir, std::slice::from_ref(&parent)).unwrap();
         let names: Vec<_> = res.folders.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["alpha", "Zeta"]);
         assert_eq!(res.book_files, 2);
-        assert_eq!(res.parent.as_deref(), dir.parent().and_then(|p| p.to_str()));
+        assert_eq!(res.parent.as_deref(), parent.to_str());
+
+        // Di folder teratas yang diizinkan: tidak ada tombol "naik"
+        let res = browse_dir(&dir, std::slice::from_ref(&dir)).unwrap();
+        assert_eq!(res.parent, None);
+        assert_eq!(res.roots, [dir.to_string_lossy()]);
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn allowed_only_inside_roots() {
+        let roots = [PathBuf::from("/home/me"), PathBuf::from("/mnt")];
+        assert!(is_allowed(Path::new("/home/me"), &roots));
+        assert!(is_allowed(Path::new("/home/me/Books"), &roots));
+        assert!(is_allowed(Path::new("/mnt/hdd/buku"), &roots));
+        assert!(!is_allowed(Path::new("/home/meme"), &roots));
+        assert!(!is_allowed(Path::new("/etc"), &roots));
+        assert!(!is_allowed(Path::new("/"), &roots));
+        assert!(is_allowed(Path::new("/etc"), &[PathBuf::from("/")]));
+        assert!(!is_allowed(Path::new("/home/me"), &[]));
     }
 
     #[test]

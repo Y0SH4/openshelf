@@ -4,8 +4,10 @@ use axum::{
     middleware,
     routing::{any, delete, get, post},
 };
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 mod auth;
 mod config;
@@ -14,10 +16,12 @@ mod folders;
 mod frontend;
 mod routes;
 mod scanner;
+mod security;
 
 use config::Config;
 use routes::AppState;
 use scanner::{Library, LibraryRoot};
+use security::LoginLimiter;
 
 #[tokio::main]
 async fn main() {
@@ -88,10 +92,22 @@ async fn main() {
         });
     }
 
+    // Siapkan hash cadangan login sekarang, supaya login pertama dengan
+    // username salah tidak lebih lambat (lihat auth::DUMMY_HASH)
+    tokio::task::spawn_blocking(auth::warm_up);
+
+    if config.browse_roots.is_empty() {
+        println!("📂 Memilih folder di Settings dimatikan (OPENSHELF_BROWSE_ROOTS kosong)");
+    } else {
+        let list: Vec<_> = config.browse_roots.iter().map(|p| p.display().to_string()).collect();
+        println!("📂 Folder yang boleh dipilih di Settings: {}", list.join(", "));
+    }
+
     let state = AppState {
         pool,
         library,
         config: config.clone(),
+        login_limiter: Arc::new(LoginLimiter::default()),
     };
 
     let app = Router::new()
@@ -145,6 +161,21 @@ async fn main() {
             state.clone(),
             auth::require_session,
         ))
+        // Header keamanan untuk semua response (kecuali yang sudah punya sendiri):
+        // - SAMEORIGIN: halaman tidak bisa di-iframe situs lain (clickjacking),
+        //   tapi reader tetap bisa meng-iframe PDF dari server ini sendiri.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("SAMEORIGIN"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("same-origin"),
+        ))
         .with_state(state);
 
     // CORS hanya jika diminta. Saat development, Vite mem-proxy /api sehingga
@@ -175,6 +206,23 @@ async fn main() {
         .unwrap_or_else(|e| panic!("Tidak bisa listen di {}: {e}", config.bind_addr));
 
     println!("OpenShelf backend running on http://{}", config.bind_addr);
+    if let Ok(addr) = listener.local_addr()
+        && !addr.ip().is_loopback()
+        && !config.secure_cookies
+    {
+        println!(
+            "⚠️  Server bisa diakses dari jaringan lewat HTTP biasa (tanpa enkripsi). \
+             Aman untuk jaringan rumah; untuk akses dari internet pasang HTTPS \
+             (mis. Caddy/Nginx) lalu set OPENSHELF_SECURE_COOKIE=true dan \
+             OPENSHELF_TRUST_PROXY=true. Hanya komputer ini: OPENSHELF_BIND=127.0.0.1:3000"
+        );
+    }
 
-    axum::serve(listener, app).await.unwrap()
+    // ConnectInfo: IP client untuk batas percobaan login
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap()
 }

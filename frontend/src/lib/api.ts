@@ -45,4 +45,6 @@ export interface BrowseResult {
   folders: { name: string; path: string }[]
   /** PDF/EPUB files directly inside this folder */
   book_files: number
+  /** Top-level folders the server allows choosing from (OPENSHELF_BROWSE_ROOTS) */
+  roots: string[]
 }
