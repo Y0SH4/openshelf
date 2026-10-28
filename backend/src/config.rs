@@ -7,6 +7,7 @@
 //! | `OPENSHELF_BIND`        | `0.0.0.0:3000` (`127.0.0.1:3000` = hanya komputer ini) |
 //! | `OPENSHELF_CORS_ORIGIN` | (kosong = tidak ada CORS, same-origin saja) |
 //! | `OPENSHELF_SECURE_COOKIE` | `false`; set `true` jika diakses lewat HTTPS |
+//! | `OPENSHELF_FRONTEND_DIR` | `<folder repo>/frontend/dist` (hasil `pnpm build`) |
 
 use std::env;
 use std::path::PathBuf;
@@ -20,6 +21,8 @@ pub struct Config {
     pub cors_origin: Option<String>,
     /// Tambahkan flag `Secure` ke cookie session (wajib saat lewat HTTPS).
     pub secure_cookies: bool,
+    /// Hasil build frontend yang disajikan backend (lihat `frontend.rs`).
+    pub frontend_dir: PathBuf,
 }
 
 fn non_empty(key: &str) -> Option<String> {
@@ -43,6 +46,14 @@ impl Config {
 
         let bind_addr = non_empty("OPENSHELF_BIND").unwrap_or_else(|| "0.0.0.0:3000".into());
 
+        let frontend_dir = non_empty("OPENSHELF_FRONTEND_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/dist"))
+            });
+        // ".../backend/../frontend/dist" → ".../frontend/dist" (jika sudah ada)
+        let frontend_dir = frontend_dir.canonicalize().unwrap_or(frontend_dir);
+
         Config {
             seed_books_dir,
             data_dir,
@@ -50,6 +61,7 @@ impl Config {
             cors_origin: non_empty("OPENSHELF_CORS_ORIGIN"),
             secure_cookies: non_empty("OPENSHELF_SECURE_COOKIE")
                 .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")),
+            frontend_dir,
         }
     }
 

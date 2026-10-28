@@ -2,7 +2,7 @@ use axum::{
     Router,
     http::{HeaderValue, Method, header},
     middleware,
-    routing::{delete, get, post},
+    routing::{any, delete, get, post},
 };
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -11,6 +11,7 @@ mod auth;
 mod config;
 mod db;
 mod folders;
+mod frontend;
 mod routes;
 mod scanner;
 
@@ -111,6 +112,24 @@ async fn main() {
             get(routes::get_categories).post(routes::create_category),
         )
         .route("/api/categories/{id}", delete(routes::delete_category))
+        .route("/api/{*rest}", any(frontend::api_not_found));
+
+    // Hasil build frontend (production). Saat development Vite yang menyajikannya.
+    let app = match frontend::routes(&config.frontend_dir) {
+        Some(files) => {
+            println!("🖥️  Frontend disajikan dari {}", config.frontend_dir.display());
+            app.merge(files)
+        }
+        None => {
+            println!(
+                "🖥️  Frontend belum di-build ({} tidak ada) — pakai `pnpm dev` atau `just build`",
+                config.frontend_dir.display()
+            );
+            app
+        }
+    };
+
+    let app = app
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,

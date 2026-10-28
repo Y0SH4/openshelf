@@ -29,3 +29,7 @@ fmt:
 build:
     cd frontend && pnpm build
     cd backend && cargo build --release
+
+# Build lalu jalankan versi production: frontend + API di satu port (http://localhost:3000)
+start: build
+    ./backend/target/release/openshelf-backend
