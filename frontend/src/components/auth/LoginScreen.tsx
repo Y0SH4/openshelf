@@ -10,13 +10,15 @@ interface LoginScreenProps {
 /**
  * Kindle-style sign-in page.
  *  - login: username + password
- *  - setup: first run (no account yet) — username, password, confirm password
+ *  - setup: first run (no account yet) — setup code from the server log,
+ *    username, password, confirm password
  */
 export const LoginScreen: React.FC<LoginScreenProps> = ({ mode, onSuccess }) => {
   const isSetup = mode === "setup"
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
+  const [setupCode, setSetupCode] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,9 +39,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ mode, onSuccess }) => 
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          isSetup
-            ? { username, password }
-            : { username, password }
+          isSetup ? { username, password, setup_code: setupCode } : { username, password }
         ),
       })
       if (res.ok) {
@@ -83,6 +83,30 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ mode, onSuccess }) => 
             )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
+              {isSetup && (
+                <div>
+                  <label htmlFor="setup-code" className={label}>
+                    Setup code
+                  </label>
+                  <input
+                    id="setup-code"
+                    value={setupCode}
+                    onChange={(e) => setSetupCode(e.target.value.toUpperCase())}
+                    autoComplete="one-time-code"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                    autoFocus
+                    required
+                    placeholder="XXXX-XXXX"
+                    className={`${field} font-mono tracking-widest`}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                    Printed in the server log when OpenShelf starts
+                    (with Docker: <code className="font-mono">docker compose logs openshelf</code>).
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label htmlFor="username" className={label}>
                   Username
@@ -94,7 +118,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ mode, onSuccess }) => 
                   autoComplete="username"
                   autoCapitalize="none"
                   spellCheck={false}
-                  autoFocus
+                  autoFocus={!isSetup}
                   required
                   className={field}
                 />
@@ -153,7 +177,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ mode, onSuccess }) => 
 
               <button
                 type="submit"
-                disabled={submitting || !username || !password}
+                disabled={submitting || !username || !password || (isSetup && !setupCode)}
                 className="w-full h-12 eink-selected font-bold text-[15px] hover:opacity-90 disabled:opacity-40"
               >
                 {submitting

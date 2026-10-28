@@ -4,6 +4,11 @@ set shell := ["bash", "-c"]
 default:
     @just --list
 
+# Install dependensi frontend (jalankan sekali setelah clone)
+setup:
+    cd frontend && pnpm install
+    @command -v pdftoppm >/dev/null || echo "⚠️  pdftoppm tidak ditemukan: install poppler-utils untuk cover PDF"
+
 # Jalankan backend (Rust) dan frontend (Vite) secara paralel
 dev:
     trap 'kill 0' EXIT; (cd backend && cargo run) & (cd frontend && pnpm dev)

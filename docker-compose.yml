@@ -1,0 +1,19 @@
+services:
+  openshelf:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # Database, sessions and cover cache
+      - openshelf-data:/data
+      # Your books. Change the left side to your folder, e.g. /mnt/hdd/ebooks:/books:ro
+      # More folders: mount them inside /books, e.g. ~/Comics:/books/comics:ro
+      - ${BOOKS_PATH:-./books}:/books:ro
+    # environment:
+    #   # Behind an HTTPS reverse proxy (Caddy, Nginx, Traefik):
+    #   OPENSHELF_SECURE_COOKIE: "true"
+    #   OPENSHELF_TRUST_PROXY: "true"
+    restart: unless-stopped
+
+volumes:
+  openshelf-data:

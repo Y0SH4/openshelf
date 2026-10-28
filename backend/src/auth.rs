@@ -1,6 +1,8 @@
 //! Login: satu akun + session cookie.
 //!
-//! - Pertama kali dibuka (belum ada akun) → halaman "Create account".
+//! - Pertama kali dibuka (belum ada akun) → halaman "Create account". Butuh
+//!   kode setup yang dicetak di log server, supaya orang lain di jaringan
+//!   yang sama tidak bisa mendahului pemilik server membuat akun.
 //! - Login → token acak disimpan (di-hash) di tabel `sessions` dan dikirim lewat cookie.
 //! - Middleware `require_session` memeriksa cookie di setiap request `/api/*`.
 
@@ -62,6 +64,29 @@ pub fn new_session_token() -> String {
 /// Yang disimpan di database: SHA-256 dari token.
 pub fn hash_token(token: &str) -> String {
     to_hex(Sha256::digest(token.as_bytes()).as_slice())
+}
+
+/// Huruf & angka yang tidak mudah tertukar (tanpa I, O, 0, 1). Tepat 32
+/// karakter, jadi `byte % 32` tidak berat sebelah.
+const SETUP_CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+/// Kode setup acak, mis. "K7QM-2XRD" (40 bit; ditambah batas percobaan per IP).
+pub fn new_setup_code() -> String {
+    let mut bytes = [0u8; 8];
+    OsRng.fill_bytes(&mut bytes);
+    let chars: String = bytes
+        .iter()
+        .map(|b| SETUP_CODE_ALPHABET[usize::from(*b) % 32] as char)
+        .collect();
+    format!("{}-{}", &chars[..4], &chars[4..])
+}
+
+/// "k7qm 2xrd" dan "K7QM-2XRD" dianggap sama.
+fn normalize_setup_code(code: &str) -> String {
+    code.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +162,14 @@ pub struct Credentials {
     pub password: String,
 }
 
+#[derive(Deserialize)]
+pub struct SetupPayload {
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub setup_code: String,
+}
+
 async fn start_session(
     state: &AppState,
     user_id: i64,
@@ -188,13 +221,40 @@ pub async fn status(
 }
 
 /// POST /api/auth/setup — membuat akun pertama (hanya jika belum ada akun).
+/// Butuh kode setup dari log server; salah kode dihitung sebagai percobaan
+/// login gagal (lihat `security.rs`).
 pub async fn setup(
     State(state): State<AppState>,
-    Json(payload): Json<Credentials>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(payload): Json<SetupPayload>,
 ) -> Result<Response, ApiError> {
     let username = payload.username.trim().to_string();
-    validate_username(&username).map_err(|m| ApiError::bad_request(m))?;
-    validate_password(&payload.password).map_err(|m| ApiError::bad_request(m))?;
+    validate_username(&username).map_err(ApiError::bad_request)?;
+    validate_password(&payload.password).map_err(ApiError::bad_request)?;
+
+    let ip = security::client_ip(&headers, peer, state.config.trust_proxy);
+    if let Err(wait) = state.login_limiter.begin(ip) {
+        return Ok(too_many_attempts(wait));
+    }
+    let expected = state
+        .setup_code
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let Some(expected) = expected else {
+        // Kode hanya dibuat saat server start tanpa akun
+        return Err(ApiError::conflict(
+            "An account already exists. Please sign in.",
+        ));
+    };
+    if normalize_setup_code(&payload.setup_code) != normalize_setup_code(&expected) {
+        eprintln!("⚠️  Kode setup salah dari {ip}");
+        return Err(ApiError(
+            StatusCode::UNAUTHORIZED,
+            "Wrong setup code. It's printed in the server log when OpenShelf starts.".into(),
+        ));
+    }
 
     // Argon2 butuh ±50–100 ms CPU → jalankan di luar thread async
     let password = payload.password;
@@ -212,6 +272,8 @@ pub async fn setup(
         ));
     };
 
+    *state.setup_code.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    state.login_limiter.success(ip);
     println!("✅ Account \"{username}\" created");
     start_session(&state, id, username).await
 }
@@ -352,6 +414,21 @@ mod tests {
         );
         assert_eq!(session_token_from(&headers).as_deref(), Some("abc123"));
         assert_eq!(session_token_from(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn setup_codes() {
+        let code = new_setup_code();
+        assert_eq!(code.len(), 9);
+        assert_eq!(&code[4..5], "-");
+        assert!(
+            code.bytes()
+                .filter(|&b| b != b'-')
+                .all(|b| SETUP_CODE_ALPHABET.contains(&b))
+        );
+        assert_ne!(code, new_setup_code());
+        assert_eq!(normalize_setup_code("k7qm 2xrd"), "K7QM2XRD");
+        assert_eq!(normalize_setup_code("K7QM-2XRD"), "K7QM2XRD");
     }
 
     #[test]

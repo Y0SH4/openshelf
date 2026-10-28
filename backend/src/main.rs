@@ -103,11 +103,27 @@ async fn main() {
         println!("📂 Folder yang boleh dipilih di Settings: {}", list.join(", "));
     }
 
+    // Belum ada akun → kode setup, wajib dimasukkan saat membuat akun pertama
+    let setup_code = match db::count_users(&pool).await {
+        Ok(0) => {
+            let code = auth::new_setup_code();
+            println!();
+            println!("🔑 No account yet. Open OpenShelf in your browser and create one");
+            println!("   with this setup code:  {code}");
+            println!("   (a new code is generated every time the server starts)");
+            println!();
+            Some(code)
+        }
+        Ok(_) => None,
+        Err(e) => panic!("Gagal membaca akun: {e}"),
+    };
+
     let state = AppState {
         pool,
         library,
         config: config.clone(),
         login_limiter: Arc::new(LoginLimiter::default()),
+        setup_code: Arc::new(std::sync::Mutex::new(setup_code)),
     };
 
     let app = Router::new()
@@ -214,7 +230,7 @@ async fn main() {
             "⚠️  Server bisa diakses dari jaringan lewat HTTP biasa (tanpa enkripsi). \
              Aman untuk jaringan rumah; untuk akses dari internet pasang HTTPS \
              (mis. Caddy/Nginx) lalu set OPENSHELF_SECURE_COOKIE=true dan \
-             OPENSHELF_TRUST_PROXY=true. Hanya komputer ini: OPENSHELF_BIND=127.0.0.1:3000"
+             OPENSHELF_TRUST_PROXY=true."
         );
     }
 

@@ -1,0 +1,9 @@
+.git
+**/node_modules
+**/target
+**/dist
+**/data
+**/.cache
+books
+*.db
+.env

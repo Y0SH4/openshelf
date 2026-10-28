@@ -9,7 +9,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::fmt::Display;
 use std::io::SeekFrom;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
@@ -31,6 +31,8 @@ pub struct AppState {
     pub library: Arc<Library>,
     pub config: Arc<Config>,
     pub login_limiter: Arc<LoginLimiter>,
+    /// Kode untuk membuat akun pertama; `None` jika sudah ada akun.
+    pub setup_code: Arc<Mutex<Option<String>>>,
 }
 
 /// Handler yang hanya butuh database tetap bisa memakai `State<SqlitePool>`.
