@@ -32,19 +32,19 @@ pub struct AppState {
     pub library: Arc<Library>,
     pub config: Arc<Config>,
     pub login_limiter: Arc<LoginLimiter>,
-    /// Kode untuk membuat akun pertama; `None` jika sudah ada akun.
+    /// Code for creating the first account; `None` once an account exists.
     pub setup_code: Arc<Mutex<Option<String>>>,
 }
 
-/// Handler yang hanya butuh database tetap bisa memakai `State<SqlitePool>`.
+/// Handlers that only need the database can still use `State<SqlitePool>`.
 impl FromRef<AppState> for SqlitePool {
     fn from_ref(state: &AppState) -> Self {
         state.pool.clone()
     }
 }
 
-/// Error API: status + pesan teks. Detail error internal hanya ditulis ke log
-/// server, tidak dikirim ke client.
+/// API error: status + text message. Internal error details are only written
+/// to the server log, never sent to the client.
 pub struct ApiError(pub StatusCode, pub String);
 
 impl ApiError {
@@ -81,12 +81,8 @@ async fn find_book(state: &AppState, id: &str) -> Result<BookItem, ApiError> {
 // Helper header
 // ---------------------------------------------------------------------------
 
-/// `Content-Disposition` yang aman untuk nama file apa pun.
-///
-/// Sebelumnya nama file dimasukkan mentah lalu `.parse().unwrap()`: nama
-/// dengan karakter non-ASCII atau `"` membuat request panic / header rusak.
-/// Sekarang: fallback ASCII untuk browser lama + `filename*` (RFC 6266/5987)
-/// berisi nama asli yang di-percent-encode.
+/// `Content-Disposition` that's safe for any file name: an ASCII fallback for
+/// old browsers + `filename*` (RFC 6266/5987) with the original name.
 pub fn content_disposition(disposition: &str, file_name: &str) -> HeaderValue {
     let fallback: String = file_name
         .chars()
@@ -121,8 +117,8 @@ pub enum RangeRequest {
     Unsatisfiable,
 }
 
-/// Parse header `Range: bytes=...` (satu range saja).
-/// Format tidak dikenal / multi-range → kirim seluruh file (diizinkan RFC 9110).
+/// Parse a `Range: bytes=...` header (single range only).
+/// Unknown format / multiple ranges → send the whole file (allowed by RFC 9110).
 pub fn parse_range(header: Option<&str>, len: u64) -> RangeRequest {
     let Some(spec) = header.and_then(|h| h.trim().strip_prefix("bytes=")) else {
         return RangeRequest::Full;
@@ -136,7 +132,7 @@ pub fn parse_range(header: Option<&str>, len: u64) -> RangeRequest {
     let (a, b) = (a.trim(), b.trim());
 
     if a.is_empty() {
-        // bytes=-500 → 500 byte terakhir
+        // bytes=-500 → last 500 bytes
         let Ok(suffix) = b.parse::<u64>() else {
             return RangeRequest::Full;
         };
@@ -161,7 +157,7 @@ pub fn parse_range(header: Option<&str>, len: u64) -> RangeRequest {
         }
     };
     if start > end {
-        return RangeRequest::Full; // sintaks tidak valid → abaikan
+        return RangeRequest::Full; // invalid syntax → ignore
     }
     if start >= len {
         return RangeRequest::Unsatisfiable;
@@ -218,11 +214,8 @@ pub async fn get_books(State(state): State<AppState>) -> Json<Vec<BookItem>> {
     Json(result)
 }
 
-/// GET /api/books/{id}/raw — file buku, di-stream dan mendukung `Range`.
-///
-/// Dulu seluruh file dibaca ke RAM per request. Sekarang file di-stream, dan
-/// dengan `Accept-Ranges: bytes` PDF.js bisa memuat potongan yang dibutuhkan
-/// saja, jadi halaman pertama buku besar muncul jauh lebih cepat.
+/// GET /api/books/{id}/raw — the book file, streamed with `Range` support, so
+/// PDF.js only loads the parts it needs for the pages being viewed.
 pub async fn get_book_raw(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -290,7 +283,7 @@ pub async fn get_book_cover(
 
     let extracted = match book.format {
         BookFormat::Epub => {
-            // Parsing EPUB = I/O blocking → jalankan di thread pool terpisah
+            // Parsing an EPUB is blocking I/O → run it on the blocking thread pool
             let p = path.clone();
             tokio::task::spawn_blocking(move || scanner::extract_epub_cover(&p))
                 .await
@@ -309,7 +302,7 @@ pub async fn get_book_cover(
         )
     });
 
-    // Hanya tipe image/* yang dikirim apa adanya
+    // Only image/* types are sent as-is
     let content_type = HeaderValue::from_str(&mime)
         .ok()
         .filter(|v| v.to_str().is_ok_and(|s| s.starts_with("image/")))
@@ -321,8 +314,8 @@ pub async fn get_book_cover(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    // Cover bisa berupa SVG (buatan kita, atau dari dalam EPUB = buatan orang lain).
-    // CSP ini mematikan script jika URL cover dibuka langsung di browser.
+    // A cover can be SVG (ours, or from inside an EPUB = made by someone else).
+    // This CSP disables scripts if the cover URL is opened directly in a browser.
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
@@ -469,7 +462,7 @@ pub async fn delete_category(
 }
 
 // POST /api/books/{id}/categories
-// Mengembalikan daftar nama kategori buku yang tersimpan, mis. ["Fiction", "Rust"]
+// Returns the names of the book's saved collections, e.g. ["Fiction", "Rust"]
 pub async fn set_book_categories(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -559,7 +552,7 @@ mod tests {
             "filename*=UTF-8''Buku%20%22Rahasia%22%20%E2%80%94%20%E6%97%A5%E6%9C%AC.pdf"
         ));
 
-        // Karakter kontrol / CRLF tidak boleh lolos ke header (header injection)
+        // Control characters / CRLF must not reach the header (header injection)
         let v = content_disposition("inline", "a\r\nSet-Cookie: x=1.pdf");
         assert!(!v.to_str().unwrap().contains('\n'));
     }

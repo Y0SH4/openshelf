@@ -9,10 +9,6 @@ interface ReadingProgressBarProps {
   className?: string
 }
 
-/**
- * Kindle-style reading progress: a 2px ink line on a hairline track,
- * with "15%" / "Read" underneath like the Kindle library grid.
- */
 export const ReadingProgressBar: React.FC<ReadingProgressBarProps> = React.memo(
   ({ percent, currentPage, totalPages, showLabel = true, className }) => {
     const clampedPercent = Math.min(100, Math.max(0, Math.round(percent)))

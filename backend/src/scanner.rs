@@ -52,13 +52,13 @@ pub struct BookProgressSummary {
 pub struct BookItem {
     pub id: String,
     pub title: String,
-    /// Nama file saja, mis. "Rust.pdf"
+    /// File name only, e.g. "Rust.pdf"
     pub file_name: String,
-    /// Path relatif terhadap folder library, mis. "Programming/Rust.pdf"
+    /// Path relative to the library folder, e.g. "Programming/Rust.pdf"
     pub rel_path: String,
-    /// ID folder library (tabel `library_folders`)
+    /// Library folder ID (`library_folders` table)
     pub folder_id: i64,
-    /// Path absolut di server — tidak dikirim ke browser
+    /// Absolute path on the server — never sent to the browser
     #[serde(skip)]
     pub path: PathBuf,
     pub format: BookFormat,
@@ -68,15 +68,15 @@ pub struct BookItem {
 }
 
 // ---------------------------------------------------------------------------
-// ID buku yang stabil
+// Stable book IDs
 // ---------------------------------------------------------------------------
 
-/// ID buku = hash FNV-1a 64-bit dari path relatif di dalam folder library,
-/// ditulis 16 digit hex. Untuk file yang langsung berada di folder library,
-/// path relatif = nama file, jadi ID-nya sama dengan versi sebelumnya.
+/// Book ID = 64-bit FNV-1a hash of the path relative to the library folder,
+/// written as 16 hex digits. For files directly in the library folder the
+/// relative path is the file name, so the ID matches the previous version.
 ///
-/// Sengaja tidak memakai `DefaultHasher`: hasilnya boleh berubah antar versi
-/// Rust, padahal ID ini disimpan permanen di database.
+/// Deliberately not `DefaultHasher`: its output may change between Rust
+/// versions, while these IDs are stored permanently in the database.
 pub fn book_id_for(rel_path: &str) -> String {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -88,21 +88,20 @@ pub fn book_id_for(rel_path: &str) -> String {
     format!("{hash:016x}")
 }
 
-/// Satu folder library yang dipilih user di halaman Settings.
 #[derive(Clone, Debug)]
 pub struct LibraryRoot {
     pub id: i64,
     pub path: PathBuf,
 }
 
-/// Batas kedalaman sub-folder (mencegah scan tanpa akhir).
+/// Max sub-folder depth (prevents endless scans).
 const MAX_DEPTH: usize = 12;
 
-/// Scan semua folder library (termasuk sub-folder).
-/// - Folder & file tersembunyi (diawali ".") dilewati.
-/// - Symlink ke folder tidak diikuti (mencegah loop); symlink ke file diikuti.
-/// - Jika dua folder library punya path relatif yang sama, buku kedua
-///   mendapat ID dari "<id folder>:<path relatif>" agar tetap unik.
+/// Scans all library folders (including sub-folders).
+/// - Hidden files and folders (starting with ".") are skipped.
+/// - Symlinks to folders aren't followed (prevents loops); symlinks to files are.
+/// - If two library folders have the same relative path, the second book
+///   gets its ID from "<folder id>:<relative path>" so it stays unique.
 pub fn scan_roots(roots: &[LibraryRoot]) -> Vec<BookItem> {
     let mut books = Vec::new();
     let mut seen = HashSet::new();
@@ -146,7 +145,7 @@ fn walk_dir(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<(String, PathB
         return;
     };
     for entry in entries.flatten() {
-        // Nama non-UTF-8 dilewati: tidak bisa dikirim aman sebagai JSON
+        // Non-UTF-8 names are skipped: they can't be sent safely as JSON
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
@@ -175,8 +174,8 @@ fn walk_dir(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<(String, PathB
     }
 }
 
-/// Meniru PERSIS cara lama memberi ID (urutan 1, 2, 3, …) — hanya dipakai
-/// sekali untuk migrasi data lama ke ID baru. Mengembalikan (id_lama, nama_file).
+/// Reproduces EXACTLY the old ID scheme (order 1, 2, 3, …) — only used once to
+/// migrate old data to the new IDs. Returns (old_id, file_name).
 pub fn legacy_positional_ids(dir_path: &Path) -> Vec<(String, String)> {
     let Ok(entries) = fs::read_dir(dir_path) else {
         return Vec::new();
@@ -209,10 +208,10 @@ pub fn legacy_positional_ids(dir_path: &Path) -> Vec<(String, String)> {
 }
 
 // ---------------------------------------------------------------------------
-// Cache hasil scan
+// Scan cache
 // ---------------------------------------------------------------------------
 
-/// Hasil satu kali scan: daftar buku + indeks ID → posisi.
+/// Result of one scan: the book list + an ID → position index.
 pub struct Catalog {
     books: Vec<BookItem>,
     by_id: HashMap<String, usize>,
@@ -241,25 +240,25 @@ impl Catalog {
     }
 }
 
-/// Daftar buku yang di-cache.
+/// Cached book list.
 ///
-/// Scan folder = I/O blocking yang bisa lama (ribuan file, HDD yang sedang
-/// sleep, NAS). Supaya tidak menahan thread worker Tokio:
-/// - Scan selalu berjalan di `spawn_blocking`.
-/// - Hanya satu scan dalam satu waktu (`scan_lock`); request lain menunggu
-///   dan memakai hasil yang sama.
-/// - Jika sudah ada hasil scan, request langsung dijawab dengan hasil itu.
-///   Pengecekan perubahan dilakukan di background (stale-while-revalidate):
-///   - tiap `CHECK_EVERY`: cek waktu modifikasi folder library, scan ulang
-///     jika berubah;
-///   - tiap `MAX_AGE`: scan ulang penuh (menangkap perubahan di sub-folder).
-/// - `set_roots` / `invalidate` membuang cache: request berikutnya menunggu
-///   scan baru (dipakai Settings, jadi hasilnya langsung terlihat).
+/// Scanning folders is blocking I/O that can be slow (thousands of files, a
+/// sleeping HDD, a NAS). To avoid holding up Tokio worker threads:
+/// - Scans always run in `spawn_blocking`.
+/// - Only one scan at a time (`scan_lock`); other requests wait and use
+///   the same result.
+/// - Once there is a scan result, requests are answered from it right away.
+///   Changes are checked in the background (stale-while-revalidate):
+///   - every `CHECK_EVERY`: check the library folders' modification times,
+///     rescan if they changed;
+///   - every `MAX_AGE`: full rescan (catches changes in sub-folders).
+/// - `set_roots` / `invalidate` drop the cache: the next request waits for
+///   a fresh scan (used by Settings, so results show up immediately).
 pub struct Library {
     roots: RwLock<Vec<LibraryRoot>>,
     cache: RwLock<Option<Arc<Snapshot>>>,
-    /// Naik setiap `invalidate`, supaya scan yang dimulai sebelumnya tidak
-    /// menyimpan hasil lama ke cache.
+    /// Bumped on every `invalidate`, so a scan started earlier can't store
+    /// stale results in the cache.
     generation: AtomicU64,
     scan_lock: tokio::sync::Mutex<()>,
     refreshing: AtomicBool,
@@ -280,7 +279,7 @@ fn root_mtimes(roots: &[LibraryRoot]) -> Vec<Option<SystemTime>> {
         .collect()
 }
 
-/// Mengembalikan `refreshing` ke false walau refresh gagal / panic.
+/// Resets `refreshing` to false even if the refresh fails / panics.
 struct RefreshGuard<'a>(&'a AtomicBool);
 
 impl Drop for RefreshGuard<'_> {
@@ -317,7 +316,7 @@ impl Library {
         *self.cache.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
-    /// Hasil scan yang masih berlaku (bukan dari sebelum `invalidate`).
+    /// The scan result that's still valid (not from before an `invalidate`).
     fn snapshot(&self) -> Option<Arc<Snapshot>> {
         let snap = self
             .cache
@@ -341,8 +340,8 @@ impl Library {
             return snap.catalog.clone();
         }
 
-        // Belum ada hasil scan → harus menunggu. Satu scan saja; yang lain
-        // menunggu di lock lalu memakai hasilnya.
+        // No scan result yet → must wait. Only one scan; the others wait
+        // on the lock and then use its result.
         let _lock = self.scan_lock.lock().await;
         if let Some(snap) = self.snapshot() {
             return snap.catalog.clone();
@@ -375,7 +374,7 @@ impl Library {
         self.books().await.find(id).cloned()
     }
 
-    /// Cek perubahan di background; tidak melakukan apa-apa jika sudah berjalan.
+    /// Check for changes in the background; does nothing if already running.
     fn spawn_refresh(self: &Arc<Self>) {
         if self
             .refreshing
@@ -394,10 +393,10 @@ impl Library {
     async fn refresh(&self) {
         let _lock = self.scan_lock.lock().await;
         let Some(prev) = self.snapshot() else {
-            return; // di-invalidate; request berikutnya yang akan scan
+            return; // invalidated; the next request will scan
         };
         if prev.checked_at.elapsed() < Self::CHECK_EVERY {
-            return; // baru saja dicek
+            return; // just checked
         }
 
         let roots = self.roots();
@@ -435,18 +434,18 @@ impl Library {
 }
 
 // ---------------------------------------------------------------------------
-// Cover
+// Covers
 // ---------------------------------------------------------------------------
 
-/// Membaca cover EPUB (blocking — panggil lewat `spawn_blocking`).
+/// Reads an EPUB cover (blocking — call via `spawn_blocking`).
 pub fn extract_epub_cover(file_path: &Path) -> Option<(Vec<u8>, String)> {
     let mut doc = EpubDoc::new(file_path).ok()?;
     doc.get_cover()
 }
 
-/// Maksimal 2 proses pdftoppm sekaligus. Saat library pertama kali dibuka,
-/// browser meminta puluhan cover bersamaan; tanpa batas ini server akan
-/// menjalankan puluhan proses pdftoppm sekaligus.
+/// At most 2 pdftoppm processes at once. When the library is first opened,
+/// the browser requests dozens of covers at the same time; without this
+/// limit the server would run dozens of pdftoppm processes at once.
 static PDFTOPPM_SLOTS: Semaphore = Semaphore::const_new(2);
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -458,9 +457,9 @@ fn is_fresh(cache: &Path, source: &Path) -> bool {
     }
 }
 
-/// Render halaman pertama PDF ke PNG dengan `pdftoppm` (poppler-utils),
-/// di-cache di `cache_dir/{book_id}.png`. Cache dibuat ulang jika file PDF
-/// lebih baru dari cache-nya.
+/// Renders the first page of a PDF to PNG with `pdftoppm` (poppler-utils),
+/// cached at `cache_dir/{book_id}.png`. The cache is rebuilt when the PDF
+/// is newer than its cached cover.
 pub async fn extract_pdf_cover(
     file_path: &Path,
     book_id: &str,
@@ -475,7 +474,7 @@ pub async fn extract_pdf_cover(
 
     let _permit = PDFTOPPM_SLOTS.acquire().await.ok()?;
 
-    // Request lain mungkin sudah membuatnya selagi kita menunggu antrian
+    // Another request may have created it while we waited in the queue
     if is_fresh(&cached_file, file_path)
         && let Ok(bytes) = tokio::fs::read(&cached_file).await
     {
@@ -483,12 +482,11 @@ pub async fn extract_pdf_cover(
     }
 
     tokio::fs::create_dir_all(cache_dir).await.ok()?;
-    // Nama sementara unik agar dua request untuk buku yang sama tidak bentrok
+    // Unique temp name so two requests for the same book don't collide
     let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let prefix = cache_dir.join(format!("tmp-{book_id}-{}-{n}", std::process::id()));
     let generated = prefix.with_extension("png");
 
-    // tokio::process: tidak memblokir thread async selama pdftoppm berjalan
     let status = tokio::process::Command::new("pdftoppm")
         .args([
             "-png",
@@ -518,10 +516,10 @@ pub async fn extract_pdf_cover(
     Some((bytes, "image/png".into()))
 }
 
-/// Escape teks untuk dimasukkan ke XML/SVG.
+/// Escapes text for use inside XML/SVG.
 ///
-/// Tanpa ini, file bernama `<script>alert(1)</script>.pdf` menghasilkan SVG
-/// berisi script yang jalan saat URL cover dibuka langsung (stored XSS).
+/// Without this, a file named `<script>alert(1)</script>.pdf` would produce an
+/// SVG with a script that runs when the cover URL is opened directly (stored XSS).
 pub fn escape_xml(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for c in input.chars() {
@@ -531,7 +529,7 @@ pub fn escape_xml(input: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
-            // Karakter kontrol tidak valid di XML 1.0
+            // Control characters are invalid in XML 1.0
             c if (c as u32) < 0x20 && !matches!(c, '\t' | '\n' | '\r') => {}
             c => out.push(c),
         }
@@ -539,8 +537,8 @@ pub fn escape_xml(input: &str) -> String {
     out
 }
 
-/// Potong judul per KARAKTER, bukan per byte. `&title[..57]` sebelumnya
-/// panic jika byte ke-57 berada di tengah karakter non-ASCII (é, 日, emoji).
+/// Truncates a title by CHARACTER, not by byte: cutting by byte can panic
+/// in the middle of a non-ASCII character (é, 日, emoji).
 pub fn truncate_chars(input: &str, max_chars: usize) -> String {
     if input.chars().count() <= max_chars {
         return input.to_string();
@@ -577,7 +575,7 @@ mod tests {
 
     #[test]
     fn book_id_is_stable_and_hex() {
-        // Nilai tetap: kalau ini berubah, semua ID di database jadi tidak cocok
+        // Fixed values: if these change, every ID in the database stops matching
         assert_eq!(book_id_for(""), "cbf29ce484222325");
         assert_eq!(book_id_for("a"), "af63dc4c8601ec8c");
         let id = book_id_for("Clean Code.pdf");
@@ -645,7 +643,7 @@ mod tests {
                 "b.pdf"
             ]
         );
-        // File di level atas: ID sama seperti versi lama (hash nama file)
+        // Top-level files: same ID as the old version (hash of the file name)
         let b = books.iter().find(|b| b.file_name == "b.pdf").unwrap();
         assert_eq!(b.id, book_id_for("b.pdf"));
         assert_eq!(b.path, dir.join("b.pdf"));
@@ -654,8 +652,8 @@ mod tests {
         assert_eq!(nested.title, "Book");
         assert_eq!(nested.format, BookFormat::Pdf);
 
-        // Cara lama: hanya level atas, ekstensi persis pdf/PDF/epub/EPUB,
-        // dan file tersembunyi IKUT dihitung (ditiru persis untuk migrasi)
+        // Old scheme: top level only, extensions exactly pdf/PDF/epub/EPUB,
+        // and hidden files ARE counted (reproduced exactly for the migration)
         let legacy = legacy_positional_ids(&dir);
         let expected: Vec<(String, String)> =
             [(".dotfile.pdf", "1"), ("a.EPUB", "2"), ("b.pdf", "3")]
@@ -722,7 +720,7 @@ mod tests {
         for t in tasks {
             results.push(t.await.unwrap());
         }
-        // Semua request memakai hasil scan yang sama (satu scan saja)
+        // All requests use the same scan result (only one scan)
         assert!(results.iter().all(|c| Arc::ptr_eq(c, &results[0])));
         assert_eq!(results[0].books().len(), 1);
 
@@ -740,20 +738,20 @@ mod tests {
         let first = lib.books().await;
         assert_eq!(first.books().len(), 1);
 
-        // Masih dalam CHECK_EVERY: hasil lama dipakai, tanpa menyentuh disk
+        // Still within CHECK_EVERY: the old result is used without touching the disk
         fs::write(dir.join("b.pdf"), b"x").unwrap();
         assert!(Arc::ptr_eq(&lib.books().await, &first));
 
-        // Scan ulang paksa (tombol Rescan di Settings) langsung terlihat
+        // A forced rescan (Rescan button in Settings) shows up immediately
         lib.invalidate();
         assert_eq!(lib.books().await.books().len(), 2);
 
-        // Refresh di background: anggap sudah lewat CHECK_EVERY
+        // Background refresh: pretend CHECK_EVERY has passed
         fs::write(dir.join("c.pdf"), b"x").unwrap();
         let snap = lib.snapshot().unwrap();
         lib.store(Snapshot {
             generation: snap.generation,
-            mtimes: vec![None], // seolah folder berubah
+            mtimes: vec![None], // as if the folder changed
             scanned_at: snap.scanned_at,
             checked_at: Instant::now() - Library::CHECK_EVERY,
             catalog: snap.catalog.clone(),
@@ -761,7 +759,7 @@ mod tests {
         lib.refresh().await;
         assert_eq!(lib.books().await.books().len(), 3);
 
-        // Refresh lama tidak boleh menimpa hasil setelah invalidate
+        // An old refresh must not overwrite the result after an invalidate
         let stale_generation = lib.snapshot().unwrap().generation;
         lib.invalidate();
         lib.store(Snapshot {

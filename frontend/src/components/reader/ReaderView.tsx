@@ -48,9 +48,8 @@ function storeScale(s: number) {
 }
 
 /**
- * Kindle-style reader.
  * - The page fills the screen; tap the page to show/hide the toolbars.
- *   Scrolling hides them again, like turning a page on a Kindle.
+ *   Scrolling hides them again.
  * - Always-on footer: "Page 42 of 280 · 15%".
  * - Toolbars: back to Library, Aa (page color + zoom), page scrubber, go to page.
  * - Progress auto-saves 1.2s after you stop on a page, and is flushed when
@@ -114,7 +113,7 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
 
           setBaseSize({ width: vp.width, height: vp.height })
           setTotalPages(pdf.numPages)
-          // First time: fit the page to the screen width, like a Kindle page
+          // First time: fit the page to the screen width
           setScale((s) => {
             if (s != null) return s
             const available = (scrollRef.current?.clientWidth ?? window.innerWidth) - 32
@@ -165,7 +164,6 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       [book.id]
     )
 
-    // Debounced auto-save when the page changes
     useEffect(() => {
       if (!doc || !readyRef.current) return
       if (currentPage === lastSavedPageRef.current) return
@@ -270,7 +268,6 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       setScale(clampScale(available / baseSize.width))
     }, [baseSize])
 
-    // Keyboard
     useEffect(() => {
       const onKey = (e: KeyboardEvent) => {
         if (e.defaultPrevented) return
@@ -322,10 +319,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     const saveLabel =
       saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Not saved yet"
 
-    // ---------- Render ----------
     return (
       <div className="relative h-[100dvh] bg-background text-foreground overflow-hidden select-none">
-        {/* Page area */}
         <main
           ref={scrollRef}
           onClick={handleTap}
@@ -382,7 +377,6 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           ) : null}
         </main>
 
-        {/* Top toolbar */}
         <header
           className={cn(
             "absolute top-0 inset-x-0 z-20 bg-background border-b border-foreground transition-transform duration-100",
@@ -447,7 +441,6 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           </div>
         </header>
 
-        {/* Bottom toolbar: scrubber + go to page */}
         {isPdf && (
           <footer
             className={cn(
@@ -517,7 +510,7 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           </footer>
         )}
 
-        {/* Always-on Kindle footer when toolbars are hidden */}
+        {/* Always-on footer when toolbars are hidden */}
         {isPdf && !chromeVisible && doc && (
           <div className="pointer-events-none absolute bottom-0 inset-x-0 z-10 h-7 px-4 flex items-center justify-between text-[11px] text-muted-foreground bg-background/90 tabular-nums">
             <span>

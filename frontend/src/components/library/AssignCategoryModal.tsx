@@ -16,11 +16,6 @@ interface AssignCategoryModalProps {
   onCategoryCreated?: (newCategory: CategoryItem) => void
 }
 
-/**
- * Kindle "Add to Collection" dialog.
- * Square checkboxes, ink border, Cancel / Done footer.
- * Time Complexity: O(C) where C = number of categories.
- */
 export const AssignCategoryModal: React.FC<AssignCategoryModalProps> = React.memo(
   ({ book, categories, isOpen, onClose, onSaved, onCategoryCreated }) => {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -44,7 +39,6 @@ export const AssignCategoryModal: React.FC<AssignCategoryModalProps> = React.mem
       setSelectedIds(initialIds)
     }, [bookId]) // intentionally keyed on the book id only
 
-    // Escape closes the dialog
     useEffect(() => {
       if (!isOpen) return
       const onKey = (e: KeyboardEvent) => {
@@ -138,7 +132,6 @@ export const AssignCategoryModal: React.FC<AssignCategoryModalProps> = React.mem
           className="bg-popover text-popover-foreground border border-foreground w-full sm:max-w-md select-none"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
           <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4 border-b border-rule">
             <div className="min-w-0">
               <h2 id="add-to-collection-title" className="font-serif text-xl font-bold">
@@ -158,7 +151,6 @@ export const AssignCategoryModal: React.FC<AssignCategoryModalProps> = React.mem
             </button>
           </div>
 
-          {/* Collections */}
           <ul className="max-h-[50vh] overflow-y-auto">
             {categories.length === 0 ? (
               <li className="text-sm text-muted-foreground text-center py-8 px-5">
@@ -195,7 +187,6 @@ export const AssignCategoryModal: React.FC<AssignCategoryModalProps> = React.mem
             )}
           </ul>
 
-          {/* Inline "Create new collection" */}
           {onCategoryCreated && (
             <form
               onSubmit={handleCreate}
@@ -226,7 +217,6 @@ export const AssignCategoryModal: React.FC<AssignCategoryModalProps> = React.mem
             </div>
           )}
 
-          {/* Footer */}
           <div className="grid grid-cols-2 border-t border-foreground">
             <button
               type="button"

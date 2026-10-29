@@ -1,11 +1,11 @@
-//! Folder library yang dipilih user di halaman Settings, plus penjelajah
-//! folder server untuk memilihnya.
+//! Library folders the user picks in Settings, plus a server-side folder
+//! browser for picking them.
 //!
-//! GET    /api/library/folders        daftar folder + jumlah buku
+//! GET    /api/library/folders        folders + book counts
 //! POST   /api/library/folders        { "path": "/home/me/Books" }
 //! DELETE /api/library/folders/{id}
-//! POST   /api/library/scan           paksa scan ulang
-//! GET    /api/fs/browse?path=/home   isi sebuah folder (hanya sub-folder)
+//! POST   /api/library/scan           force a rescan
+//! GET    /api/fs/browse?path=/home   contents of a folder (sub-folders only)
 
 use axum::{
     Json,
@@ -25,7 +25,7 @@ use crate::scanner::{BookFormat, LibraryRoot};
 pub struct FolderInfo {
     pub id: i64,
     pub path: String,
-    /// false jika folder sudah tidak ada / tidak bisa dibaca (mis. HDD dilepas)
+    /// false if the folder is gone or unreadable (e.g. HDD unplugged)
     pub available: bool,
     pub book_count: usize,
 }
@@ -40,7 +40,7 @@ pub struct ScanResult {
     pub book_count: usize,
 }
 
-/// Muat ulang daftar folder dari database ke `Library` (cache scan ikut direset).
+/// Reload the folder list from the database into `Library` (resets the scan cache).
 pub async fn reload_roots(state: &AppState) -> Result<(), ApiError> {
     let folders = db::list_folders(&state.pool)
         .await
@@ -75,8 +75,8 @@ async fn folder_infos(state: &AppState) -> Vec<FolderInfo> {
         .collect()
 }
 
-/// Folder yang boleh dijelajahi / ditambahkan (`OPENSHELF_BROWSE_ROOTS`).
-/// `path` harus sudah di-canonicalize, supaya symlink & `..` tidak bisa keluar.
+/// Folders that may be browsed / added (`OPENSHELF_BROWSE_ROOTS`).
+/// `path` must already be canonicalized, so symlinks and `..` can't escape.
 pub fn is_allowed(path: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| path.starts_with(root))
 }
@@ -136,7 +136,7 @@ pub async fn add(
         return Err(outside_roots(&state.config.browse_roots));
     }
 
-    // Folder di dalam folder lain akan di-scan dua kali → tolak
+    // A folder inside another one would be scanned twice → reject
     for root in state.library.roots() {
         if path == root.path {
             return Err(ApiError::conflict("This folder is already in your library"));
@@ -174,7 +174,7 @@ pub async fn add(
 }
 
 /// DELETE /api/library/folders/{id}
-/// Hanya menghapus folder dari library; file buku dan progres baca tidak disentuh.
+/// Only removes the folder from the library; book files and reading progress are untouched.
 pub async fn remove(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<i64>,
@@ -198,7 +198,7 @@ pub async fn rescan(State(state): State<AppState>) -> Json<ScanResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Penjelajah folder
+// Folder browser
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -217,15 +217,15 @@ pub struct BrowseResult {
     pub path: String,
     pub parent: Option<String>,
     pub folders: Vec<DirEntry>,
-    /// Jumlah file PDF/EPUB langsung di folder ini (petunjuk untuk user)
+    /// Number of PDF/EPUB files directly in this folder (a hint for the user)
     pub book_files: usize,
-    /// Folder teratas yang boleh dijelajahi (pintasan di dialog)
+    /// Top-level folders that may be browsed (shortcuts in the dialog)
     pub roots: Vec<String>,
 }
 
 const MAX_BROWSE_ENTRIES: usize = 2000;
 
-/// Isi satu folder. `parent` = None jika naik satu level sudah di luar `roots`.
+/// Contents of one folder. `parent` = None if going up one level would leave `roots`.
 pub fn browse_dir(path: &Path, roots: &[PathBuf]) -> Result<BrowseResult, String> {
     let entries = fs::read_dir(path).map_err(|e| format!("Can't open folder: {e}"))?;
     let mut folders = Vec::new();
@@ -266,8 +266,8 @@ pub fn browse_dir(path: &Path, roots: &[PathBuf]) -> Result<BrowseResult, String
 }
 
 /// GET /api/fs/browse?path=...
-/// Tanpa `path`: mulai dari folder home user yang menjalankan server (jika
-/// diizinkan), atau folder pertama di `OPENSHELF_BROWSE_ROOTS`.
+/// Without `path`: starts in the home folder of the user running the server (if
+/// allowed), or the first folder in `OPENSHELF_BROWSE_ROOTS`.
 pub async fn browse(
     State(state): State<AppState>,
     Query(query): Query<BrowseQuery>,
@@ -327,7 +327,6 @@ mod tests {
         assert_eq!(res.book_files, 2);
         assert_eq!(res.parent.as_deref(), parent.to_str());
 
-        // Di folder teratas yang diizinkan: tidak ada tombol "naik"
         let res = browse_dir(&dir, std::slice::from_ref(&dir)).unwrap();
         assert_eq!(res.parent, None);
         assert_eq!(res.roots, [dir.to_string_lossy()]);

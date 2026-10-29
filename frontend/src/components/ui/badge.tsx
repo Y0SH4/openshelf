@@ -11,7 +11,6 @@ const badgeVariants = cva(
         secondary: "bg-secondary text-secondary-foreground",
         destructive: "bg-foreground text-background",
         outline: "border border-foreground text-foreground",
-        // Small black tag, like Kindle's "NEW" / "SAMPLE" corner labels
         kindle: "bg-foreground text-background",
       },
     },

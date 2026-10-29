@@ -16,10 +16,6 @@ const THEMES: { id: ThemeMode; label: string; swatch: string }[] = [
   { id: "dark", label: "Black", swatch: "bg-[#0a0a0a] text-[#ddd]" },
 ]
 
-/**
- * Kindle "Aa" display settings popover.
- * Closes on outside click or Escape.
- */
 export const DisplayMenu: React.FC<DisplayMenuProps> = ({
   theme,
   onThemeChange,

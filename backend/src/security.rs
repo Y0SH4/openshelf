@@ -1,4 +1,4 @@
-//! Pengamanan dasar: batas percobaan login per IP & IP client.
+//! Basic protection: per-IP sign-in attempt limits and client IP detection.
 
 use axum::http::HeaderMap;
 use std::collections::HashMap;
@@ -6,11 +6,11 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Maksimal percobaan login gagal per IP dalam `WINDOW`, lalu dikunci `LOCKOUT`.
+/// Max failed sign-in attempts per IP within `WINDOW`, then locked for `LOCKOUT`.
 const MAX_ATTEMPTS: u32 = 5;
 const WINDOW: Duration = Duration::from_secs(15 * 60);
 const LOCKOUT: Duration = Duration::from_secs(15 * 60);
-/// Batas jumlah IP yang diingat, supaya memori tidak bisa dibanjiri.
+/// Cap on the number of tracked IPs, so memory can't be flooded.
 const MAX_TRACKED: usize = 10_000;
 
 struct Attempts {
@@ -19,18 +19,16 @@ struct Attempts {
     locked_until: Option<Instant>,
 }
 
-/// Membatasi percobaan login per IP.
-///
-/// Percobaan dihitung SEBELUM password dicek (`begin`) dan baru dihapus jika
-/// berhasil (`success`). Jadi 100 request paralel tetap hanya mendapat
-/// `MAX_ATTEMPTS` kesempatan, dan Argon2 tidak dijalankan untuk IP yang dikunci.
+/// Attempts are counted BEFORE the password is checked (`begin`) and cleared
+/// only on success (`success`). So 100 parallel requests still get only
+/// `MAX_ATTEMPTS` tries, and Argon2 never runs for a locked IP.
 #[derive(Default)]
 pub struct LoginLimiter {
     attempts: Mutex<HashMap<IpAddr, Attempts>>,
 }
 
 impl LoginLimiter {
-    /// `Err(sisa waktu)` jika IP sedang dikunci.
+    /// `Err(remaining time)` while the IP is locked.
     pub fn begin(&self, ip: IpAddr) -> Result<(), Duration> {
         self.begin_at(ip, Instant::now())
     }
@@ -75,9 +73,9 @@ impl LoginLimiter {
     }
 }
 
-/// IP client. Dengan `trust_proxy` (server di belakang Nginx/Caddy), dipakai
-/// entri TERAKHIR `X-Forwarded-For`, yaitu yang ditambahkan proxy kita sendiri;
-/// entri sebelumnya bisa dikarang client.
+/// Client IP. With `trust_proxy` (behind Nginx/Caddy) the LAST
+/// `X-Forwarded-For` entry is used: that's the one our own proxy appended;
+/// earlier entries can be made up by the client.
 pub fn client_ip(headers: &HeaderMap, peer: SocketAddr, trust_proxy: bool) -> IpAddr {
     if trust_proxy {
         let forwarded = headers
@@ -110,15 +108,12 @@ mod tests {
             assert!(limiter.begin_at(ip, t0).is_ok());
         }
         assert_eq!(limiter.begin_at(ip, t0), Err(LOCKOUT));
-        // Masih terkunci, sisa waktu berkurang
         let later = t0 + Duration::from_secs(60);
         assert_eq!(
             limiter.begin_at(ip, later),
             Err(LOCKOUT - Duration::from_secs(60))
         );
-        // IP lain tidak terpengaruh
         assert!(limiter.begin_at(other, later).is_ok());
-        // Setelah LOCKOUT selesai boleh mencoba lagi
         assert!(
             limiter
                 .begin_at(ip, t0 + LOCKOUT + Duration::from_secs(1))
@@ -137,11 +132,11 @@ mod tests {
         limiter.success(ip);
         assert!(limiter.begin_at(ip, t0).is_ok());
 
-        // Gagal tersebar lebih lama dari WINDOW tidak menyebabkan kunci
+        // Failures spread over more than WINDOW don't cause a lockout
         let limiter = LoginLimiter::default();
         for i in 0..(MAX_ATTEMPTS * 3) {
             let t = t0 + (WINDOW / MAX_ATTEMPTS) * (i + 1);
-            assert!(limiter.begin_at(ip, t).is_ok(), "percobaan ke-{i}");
+            assert!(limiter.begin_at(ip, t).is_ok(), "attempt {i}");
         }
     }
 

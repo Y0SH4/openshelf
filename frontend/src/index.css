@@ -128,7 +128,6 @@
 }
 
 @layer components {
-  /* Thin Kindle-style section rule */
   .eink-rule {
     @apply border-t border-rule;
   }

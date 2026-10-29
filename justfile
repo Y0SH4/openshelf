@@ -1,40 +1,40 @@
 set shell := ["bash", "-c"]
 
-# Tampilkan daftar perintah yang tersedia
+# List available commands
 default:
     @just --list
 
-# Install dependensi frontend (jalankan sekali setelah clone)
+# Install frontend dependencies (run once after cloning)
 setup:
     cd frontend && pnpm install
-    @command -v pdftoppm >/dev/null || echo "⚠️  pdftoppm tidak ditemukan: install poppler-utils untuk cover PDF"
+    @command -v pdftoppm >/dev/null || echo "⚠️  pdftoppm not found: install poppler-utils for PDF covers"
 
-# Jalankan backend (Rust) dan frontend (Vite) secara paralel
+# Run the backend (Rust) and frontend (Vite) together
 dev:
     trap 'kill 0' EXIT; (cd backend && cargo run) & (cd frontend && pnpm dev)
 
-# Jalankan hanya backend
+# Run only the backend
 dev-backend:
     cd backend && cargo run
 
-# Jalankan hanya frontend
+# Run only the frontend
 dev-frontend:
     cd frontend && pnpm dev
 
-# Cek error & linting di kedua project
+# Check for errors and lint both projects
 check:
     cd backend && cargo clippy
     cd frontend && pnpm tsc
 
-# Format kode otomatis
+# Format the code
 fmt:
     cd backend && cargo fmt
 
-# Build release untuk deployment homeserver
+# Release build for deployment
 build:
     cd frontend && pnpm build
     cd backend && cargo build --release
 
-# Build lalu jalankan versi production: frontend + API di satu port (http://localhost:3000)
+# Build, then run the production version: frontend + API on one port (http://localhost:3000)
 start: build
     ./backend/target/release/openshelf-backend

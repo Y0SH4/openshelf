@@ -31,8 +31,6 @@ async fn main() {
         .await
         .expect("Failed to initialize the SQLite database");
 
-    // Folder library diatur di halaman Settings. BOOKS_DIR (opsional) hanya
-    // dipakai sekali sebagai folder awal jika daftar folder masih kosong.
     let mut folders = db::list_folders(&pool)
         .await
         .expect("Failed to read library folders");
@@ -58,7 +56,6 @@ async fn main() {
         })
         .collect();
 
-    // Sekali saja: pindahkan progres & koleksi dari ID lama (1, 2, 3, …) ke ID baru.
     let legacy = roots
         .first()
         .map(|r| scanner::legacy_positional_ids(&r.path))
@@ -85,8 +82,8 @@ async fn main() {
     }
 
     let library = Arc::new(Library::new(roots));
-    // Scan pertama di background, supaya request pertama tidak menunggu
-    // (terasa saat buku ada di HDD yang sedang sleep).
+    // Initial scan in the background, so the first request doesn't wait
+    // (noticeable when the books are on a sleeping HDD).
     {
         let library = library.clone();
         tokio::spawn(async move {
@@ -95,8 +92,8 @@ async fn main() {
         });
     }
 
-    // Siapkan hash cadangan login sekarang, supaya login pertama dengan
-    // username salah tidak lebih lambat (lihat auth::DUMMY_HASH)
+    // Build the fallback sign-in hash now, so the first sign-in with an
+    // unknown username isn't slower (see auth::DUMMY_HASH)
     tokio::task::spawn_blocking(auth::warm_up);
 
     if config.browse_roots.is_empty() {
@@ -113,7 +110,6 @@ async fn main() {
         );
     }
 
-    // Belum ada akun → kode setup, wajib dimasukkan saat membuat akun pertama
     let setup_code = match db::count_users(&pool).await {
         Ok(0) => {
             let code = auth::new_setup_code();
@@ -167,7 +163,6 @@ async fn main() {
         .route("/api/categories/{id}", delete(routes::delete_category))
         .route("/api/{*rest}", any(frontend::api_not_found));
 
-    // Hasil build frontend (production). Saat development Vite yang menyajikannya.
     let app = match frontend::routes(&config.frontend_dir) {
         Some(files) => {
             println!(
@@ -190,9 +185,7 @@ async fn main() {
             state.clone(),
             auth::require_session,
         ))
-        // Header keamanan untuk semua response (kecuali yang sudah punya sendiri):
-        // - SAMEORIGIN: halaman tidak bisa di-iframe situs lain (clickjacking),
-        //   tapi reader tetap bisa meng-iframe PDF dari server ini sendiri.
+        // SAMEORIGIN, not DENY: the reader iframes PDFs from this same server.
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_FRAME_OPTIONS,
             HeaderValue::from_static("SAMEORIGIN"),
@@ -207,9 +200,7 @@ async fn main() {
         ))
         .with_state(state);
 
-    // CORS hanya jika diminta. Saat development, Vite mem-proxy /api sehingga
-    // semuanya same-origin dan CORS tidak dibutuhkan. Dulu: allow_origin(Any),
-    // artinya website mana pun bisa memakai API ini lewat browser kamu.
+    // CORS only when asked for; in development Vite proxies /api (same-origin).
     let app = match config.cors_origin.as_deref().map(HeaderValue::from_str) {
         Some(Ok(origin)) => app.layer(
             CorsLayer::new()
@@ -246,7 +237,7 @@ async fn main() {
         );
     }
 
-    // ConnectInfo: IP client untuk batas percobaan login
+    // ConnectInfo: client IP for the sign-in attempt limit
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

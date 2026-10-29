@@ -28,13 +28,6 @@ interface BookCardProps {
   variant?: "grid" | "list"
 }
 
-/**
- * Kindle library item.
- *  - grid: bare cover with hairline border, "NEW" corner tag for unread books,
- *          title + thin progress line underneath.
- *  - list: small cover, title, collections, percent on the right.
- * The ⋮ button opens "Add to collection", like Kindle's long-press menu.
- */
 export const BookCard: React.FC<BookCardProps> = React.memo(
   ({ book, onSelect, onManageCategories, variant = "grid" }) => {
     const progressPercent = book.progress?.progress_percent ?? 0
@@ -114,7 +107,6 @@ export const BookCard: React.FC<BookCardProps> = React.memo(
         >
           {cover}
 
-          {/* Kindle corner tags */}
           {isNew && (
             <Badge variant="kindle" className="absolute top-0 right-0">
               New
@@ -124,7 +116,6 @@ export const BookCard: React.FC<BookCardProps> = React.memo(
             {book.format}
           </Badge>
 
-          {/* e-ink "pressed" feedback: a frame, not a lift */}
           <span className="pointer-events-none absolute inset-0 ring-0 group-hover:ring-2 ring-inset ring-foreground" />
         </button>
 

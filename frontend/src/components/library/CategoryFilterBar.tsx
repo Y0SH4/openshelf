@@ -17,10 +17,6 @@ interface CategoryFilterBarProps {
   totalBooksCount: number
 }
 
-/**
- * Kindle "Collections" filter row.
- * Outlined square chips; the selected one is inverted (ink on paper → paper on ink).
- */
 export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = React.memo(
   ({
     categories,

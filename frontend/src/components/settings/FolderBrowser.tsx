@@ -9,10 +9,6 @@ interface FolderBrowserProps {
   onSelect: (path: string) => Promise<string | null>
 }
 
-/**
- * Kindle-style dialog for picking a folder on the server.
- * Click a folder to open it, "Up" to go to the parent, or type a path.
- */
 export const FolderBrowser: React.FC<FolderBrowserProps> = ({ onClose, onSelect }) => {
   const [data, setData] = useState<BrowseResult | null>(null)
   const [pathInput, setPathInput] = useState("")
@@ -40,7 +36,6 @@ export const FolderBrowser: React.FC<FolderBrowserProps> = ({ onClose, onSelect 
     }
   }, [])
 
-  // Start in the server user's home folder
   useEffect(() => {
     open()
   }, [open])
@@ -74,7 +69,6 @@ export const FolderBrowser: React.FC<FolderBrowserProps> = ({ onClose, onSelect 
         className="bg-popover text-popover-foreground border border-foreground w-full sm:max-w-lg flex flex-col max-h-[90dvh]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3">
           <div>
             <h2 id="folder-browser-title" className="font-serif text-xl font-bold">
@@ -94,7 +88,6 @@ export const FolderBrowser: React.FC<FolderBrowserProps> = ({ onClose, onSelect 
           </button>
         </div>
 
-        {/* Path bar */}
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -150,7 +143,6 @@ export const FolderBrowser: React.FC<FolderBrowserProps> = ({ onClose, onSelect 
           </div>
         )}
 
-        {/* Folder list */}
         <div className="flex-1 min-h-[240px] overflow-y-auto">
           {loading ? (
             <p className="text-sm text-muted-foreground text-center py-10">Loading…</p>
@@ -183,7 +175,6 @@ export const FolderBrowser: React.FC<FolderBrowserProps> = ({ onClose, onSelect 
           </div>
         )}
 
-        {/* Footer */}
         <div className="border-t border-foreground">
           {data && (
             <p className="px-5 pt-3 text-xs text-muted-foreground">

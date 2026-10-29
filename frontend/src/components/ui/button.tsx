@@ -2,7 +2,6 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
-// Kindle / e-ink buttons: square, flat, 1px ink border, inverted when primary.
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-1.5 whitespace-nowrap text-sm font-medium select-none disabled:pointer-events-none disabled:opacity-40",
   {

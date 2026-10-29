@@ -1,34 +1,30 @@
-//! Konfigurasi dari environment variable.
+//! Configuration from environment variables.
 //!
-//! | Variabel                | Default                                   |
+//! | Variable                | Default                                   |
 //! |-------------------------|-------------------------------------------|
-//! | `BOOKS_DIR`             | (opsional) folder awal library — hanya dipakai jika belum ada folder di Settings |
-//! | `OPENSHELF_DATA_DIR`    | `<folder backend>/data` (db + cache cover) |
-//! | `OPENSHELF_BIND`        | `0.0.0.0:3000` (`127.0.0.1:3000` = hanya komputer ini) |
-//! | `OPENSHELF_CORS_ORIGIN` | (kosong = tidak ada CORS, same-origin saja) |
-//! | `OPENSHELF_SECURE_COOKIE` | `false`; set `true` jika diakses lewat HTTPS |
-//! | `OPENSHELF_FRONTEND_DIR` | `<folder repo>/frontend/dist` (hasil `pnpm build`) |
-//! | `OPENSHELF_BROWSE_ROOTS` | `$HOME:/mnt:/media:/run/media:/srv` — folder yang boleh dijelajahi & dijadikan library (`/` = semua) |
-//! | `OPENSHELF_TRUST_PROXY` | `false`; set `true` jika di belakang Nginx/Caddy (IP client dari `X-Forwarded-For`) |
+//! | `BOOKS_DIR`             | (optional) first library folder — only used when Settings has no folders yet |
+//! | `OPENSHELF_DATA_DIR`    | `<backend folder>/data` (database + cover cache) |
+//! | `OPENSHELF_BIND`        | `0.0.0.0:3000` (`127.0.0.1:3000` = this computer only) |
+//! | `OPENSHELF_CORS_ORIGIN` | (empty = no CORS, same-origin only) |
+//! | `OPENSHELF_SECURE_COOKIE` | `false`; set `true` when served over HTTPS |
+//! | `OPENSHELF_FRONTEND_DIR` | `<repo>/frontend/dist` (output of `pnpm build`) |
+//! | `OPENSHELF_BROWSE_ROOTS` | `$HOME:/mnt:/media:/run/media:/srv` — folders that can be browsed and added as libraries (`/` = everything) |
+//! | `OPENSHELF_TRUST_PROXY` | `false`; set `true` behind Nginx/Caddy (client IP from `X-Forwarded-For`) |
 
 use std::env;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Folder awal library dari env `BOOKS_DIR`. Folder sebenarnya diatur di Settings.
     pub seed_books_dir: Option<PathBuf>,
     pub data_dir: PathBuf,
     pub bind_addr: String,
     pub cors_origin: Option<String>,
-    /// Tambahkan flag `Secure` ke cookie session (wajib saat lewat HTTPS).
     pub secure_cookies: bool,
-    /// Hasil build frontend yang disajikan backend (lihat `frontend.rs`).
     pub frontend_dir: PathBuf,
-    /// Hanya folder di dalam salah satu path ini yang bisa dijelajahi dan
-    /// ditambahkan sebagai library dari Settings. Sudah di-canonicalize.
+    /// Only folders inside one of these paths can be browsed and added as
+    /// libraries from Settings. Already canonicalized.
     pub browse_roots: Vec<PathBuf>,
-    /// Ambil IP client dari `X-Forwarded-For` (untuk batas percobaan login).
     pub trust_proxy: bool,
 }
 
@@ -43,7 +39,7 @@ fn flag(key: &str) -> bool {
     non_empty(key).is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
 }
 
-/// Path yang ada saja, di-canonicalize, tanpa duplikat / yang sudah tercakup path lain.
+/// Existing paths only, canonicalized, without duplicates or paths covered by another.
 fn browse_roots(raw: Option<String>) -> Vec<PathBuf> {
     let candidates: Vec<PathBuf> = match raw {
         Some(list) => env::split_paths(&list).collect(),
@@ -71,8 +67,7 @@ impl Config {
             .map(PathBuf::from)
             .map(|p| p.canonicalize().unwrap_or(p));
 
-        // Default: selalu folder `backend/data`, apa pun folder kerja saat `cargo run`.
-        // Sebelumnya path relatif membuat dua database (data/ dan backend/data/).
+        // Default: always `backend/data`, whatever the working directory of `cargo run`.
         let data_dir = non_empty("OPENSHELF_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/data")));
@@ -84,7 +79,6 @@ impl Config {
             .unwrap_or_else(|| {
                 PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/dist"))
             });
-        // ".../backend/../frontend/dist" → ".../frontend/dist" (jika sudah ada)
         let frontend_dir = frontend_dir.canonicalize().unwrap_or(frontend_dir);
 
         Config {

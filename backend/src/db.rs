@@ -7,15 +7,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::scanner::book_id_for;
 
-/// Nilai `meta.book_id_scheme` setelah migrasi ID berbasis nama file.
+/// Value of `meta.book_id_scheme` after migrating to file-name-based IDs.
 const BOOK_ID_SCHEME: &str = "fnv1a-filename-v1";
 
 pub async fn init_db(db_path: &Path) -> Result<SqlitePool, sqlx::Error> {
     if let Some(dir) = db_path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    // SqliteConnectOptions::filename aman untuk path berisi spasi / karakter khusus.
-    // sqlx menyalakan PRAGMA foreign_keys secara default.
+    // SqliteConnectOptions::filename is safe for paths with spaces / special characters.
+    // sqlx enables PRAGMA foreign_keys by default.
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true);
@@ -30,7 +30,6 @@ pub async fn init_db(db_path: &Path) -> Result<SqlitePool, sqlx::Error> {
     Ok(pool)
 }
 
-/// Membuat tabel & data awal. Dipakai oleh init_db dan oleh test.
 pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
@@ -82,7 +81,6 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // Folder buku yang dipilih user di halaman Settings
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS library_folders (
@@ -95,7 +93,7 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // Akun login. COLLATE NOCASE: "Reza" dan "reza" dianggap sama.
+    // Accounts. COLLATE NOCASE: "Reza" and "reza" are the same user.
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS users (
@@ -109,8 +107,8 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // Session login. Yang disimpan hanya SHA-256 dari token (bukan token aslinya),
-    // jadi kalau file database bocor, isinya tidak bisa dipakai untuk login.
+    // Sessions. Only the SHA-256 of the token is stored (not the token itself),
+    // so a leaked database file can't be used to sign in.
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS sessions (
@@ -141,10 +139,9 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 // ---------------------------------------------------------------------------
-// Migrasi ID buku: "1", "2", … → hash nama file
+// Book ID migration: "1", "2", … → file name hash
 // ---------------------------------------------------------------------------
 
-/// Hasil migrasi ID, untuk dicetak di log.
 #[derive(Debug, Default, PartialEq)]
 pub struct IdMigrationReport {
     pub migrated_rows: u64,
@@ -152,15 +149,15 @@ pub struct IdMigrationReport {
     pub backup: Option<String>,
 }
 
-/// Memindahkan progres & koleksi dari ID lama (urutan file) ke ID baru
-/// (hash nama file). Hanya berjalan sekali; ditandai di tabel `meta`.
+/// Moves progress & collections from the old IDs (file order) to the new IDs
+/// (file name hash). Runs only once; recorded in the `meta` table.
 ///
-/// `legacy` = pasangan (id_lama, nama_file) dari `scanner::legacy_positional_ids`,
-/// yaitu urutan file SAAT INI dengan aturan lama. Asumsinya isi folder buku
-/// belum berubah sejak server terakhir dijalankan.
+/// `legacy` = (old_id, file_name) pairs from `scanner::legacy_positional_ids`,
+/// i.e. the CURRENT file order under the old rules. This assumes the books
+/// folder hasn't changed since the server last ran.
 ///
-/// Jika `db_path` diberikan, database di-backup dulu ke
-/// `openshelf.db.bak-<timestamp>` sebelum ada yang diubah.
+/// If `db_path` is given, the database is first backed up to
+/// `openshelf.db.bak-<timestamp>` before anything changes.
 pub async fn migrate_legacy_book_ids(
     pool: &SqlitePool,
     legacy: &[(String, String)],
@@ -174,8 +171,8 @@ pub async fn migrate_legacy_book_ids(
         return Ok(IdMigrationReport::default());
     }
 
-    // ID lama = angka saja. Semua SQL di sini statis: sqlx 0.9 hanya menerima
-    // string SQL statis (`&'static str`) untuk mencegah SQL injection.
+    // Old IDs = digits only. All SQL here is static: sqlx 0.9 only accepts
+    // static SQL strings (`&'static str`) to prevent SQL injection.
     let legacy_rows: i64 = sqlx::query_scalar(
         r#"
         SELECT
@@ -190,9 +187,9 @@ pub async fn migrate_legacy_book_ids(
 
     let mut report = IdMigrationReport::default();
 
-    // Folder buku kosong/tidak terbaca padahal ada data lama: JANGAN migrasi,
-    // kalau tidak semua data lama akan dianggap yatim dan dihapus.
-    // Coba lagi di start berikutnya setelah BOOKS_DIR benar.
+    // Books folder empty/unreadable while old data exists: DON'T migrate,
+    // otherwise all old data would be treated as orphaned and deleted.
+    // Try again on the next start once BOOKS_DIR is correct.
     if legacy_rows > 0 && legacy.is_empty() {
         eprintln!(
             "⚠️  Found {legacy_rows} rows with old book IDs, but the books folder is empty \
@@ -208,7 +205,7 @@ pub async fn migrate_legacy_book_ids(
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             let backup = path.with_extension(format!("db.bak-{stamp}"));
-            // VACUUM INTO menerima ekspresi, jadi path bisa di-bind sebagai parameter
+            // VACUUM INTO takes an expression, so the path can be bound as a parameter
             sqlx::query("VACUUM INTO ?")
                 .bind(backup.to_string_lossy().to_string())
                 .execute(pool)
@@ -234,7 +231,7 @@ pub async fn migrate_legacy_book_ids(
             report.migrated_rows += progress.rows_affected() + cats.rows_affected();
         }
 
-        // Sisa ID angka = buku yang filenya sudah tidak ada; tidak bisa dipetakan.
+        // Remaining numeric IDs = books whose file is gone; they can't be mapped.
         let p = sqlx::query(
             "DELETE FROM reading_progress WHERE book_id <> '' AND book_id NOT GLOB '*[^0-9]*'",
         )
@@ -266,7 +263,7 @@ async fn mark_scheme(conn: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Erro
 }
 
 // ---------------------------------------------------------------------------
-// Folder library
+// Library folders
 // ---------------------------------------------------------------------------
 
 #[derive(sqlx::FromRow, Clone, Debug, Serialize)]
@@ -292,7 +289,7 @@ pub async fn add_folder(pool: &SqlitePool, path: &str) -> Result<LibraryFolder, 
     })
 }
 
-/// Mengembalikan `true` jika ada folder yang terhapus.
+/// Returns `true` if a folder was deleted.
 pub async fn delete_folder(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
     let res = sqlx::query("DELETE FROM library_folders WHERE id = ?")
         .bind(id)
@@ -302,7 +299,7 @@ pub async fn delete_folder(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Err
 }
 
 // ---------------------------------------------------------------------------
-// Akun & session
+// Accounts & sessions
 // ---------------------------------------------------------------------------
 
 #[derive(sqlx::FromRow, Clone, Debug)]
@@ -332,9 +329,9 @@ pub async fn find_user(pool: &SqlitePool, username: &str) -> Result<Option<User>
         .await
 }
 
-/// Membuat akun PERTAMA. Mengembalikan None jika sudah ada akun.
-/// Pengecekan & insert dalam satu query, jadi dua request setup yang
-/// bersamaan tidak bisa sama-sama berhasil (race condition).
+/// Creates the FIRST account. Returns None if an account already exists.
+/// Check and insert happen in one query, so two simultaneous setup
+/// requests can't both succeed (race condition).
 pub async fn create_first_user(
     pool: &SqlitePool,
     username: &str,
@@ -368,7 +365,7 @@ pub async fn create_session(
     Ok(())
 }
 
-/// User pemilik session yang masih berlaku.
+/// The user owning a session that's still valid.
 pub async fn user_for_session(
     pool: &SqlitePool,
     token_hash: &str,
@@ -404,7 +401,7 @@ pub async fn delete_expired_sessions(pool: &SqlitePool) -> Result<u64, sqlx::Err
 }
 
 // ---------------------------------------------------------------------------
-// Model
+// Models
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, sqlx::FromRow, Clone)]
@@ -441,7 +438,7 @@ pub struct SaveProgressPayload {
 }
 
 // ---------------------------------------------------------------------------
-// Progres baca
+// Reading progress
 // ---------------------------------------------------------------------------
 
 pub async fn get_progress(pool: &SqlitePool, book_id: &str) -> Option<ReadingProgress> {
@@ -500,12 +497,12 @@ pub async fn save_progress(
 }
 
 // ---------------------------------------------------------------------------
-// Koleksi / kategori
+// Collections
 // ---------------------------------------------------------------------------
 
 pub const MAX_CATEGORY_NAME_CHARS: usize = 50;
 
-/// "Self Improvement!!" → "self-improvement". Huruf non-ASCII (é, 日) dipertahankan.
+/// "Self Improvement!!" → "self-improvement". Non-ASCII letters (é, 日) are kept.
 pub fn slugify(name: &str) -> String {
     let mut slug = String::new();
     for c in name.trim().chars().flat_map(char::to_lowercase) {
@@ -535,7 +532,7 @@ pub async fn get_categories(pool: &SqlitePool) -> Result<Vec<Category>, sqlx::Er
     .await
 }
 
-/// Nama harus sudah divalidasi pemanggil (lihat routes::create_category).
+/// The name must already be validated by the caller (see routes::create_category).
 pub async fn create_category(pool: &SqlitePool, name: &str) -> Result<Category, sqlx::Error> {
     let name = name.trim();
     let id = slugify(name);
@@ -551,7 +548,7 @@ pub async fn create_category(pool: &SqlitePool, name: &str) -> Result<Category, 
     })
 }
 
-/// Mengembalikan `true` jika ada kategori yang terhapus.
+/// Returns `true` if a collection was deleted.
 pub async fn delete_category(pool: &SqlitePool, category_id: &str) -> Result<bool, sqlx::Error> {
     let res = sqlx::query("DELETE FROM categories WHERE id = ?")
         .bind(category_id)
@@ -596,18 +593,17 @@ pub async fn get_all_book_categories_map(pool: &SqlitePool) -> HashMap<String, V
     map
 }
 
-/// Mengganti semua kategori sebuah buku, lalu mengembalikan nama-nama
-/// kategori yang benar-benar tersimpan (urut nama).
+/// Replaces all collections of a book, then returns the names of the
+/// collections actually saved (sorted by name).
 ///
-/// ID kategori yang tidak ada di tabel `categories` dilewati dengan aman
-/// (INSERT ... SELECT hanya menyisipkan jika kategorinya ada), sehingga
-/// tidak pernah memicu error FOREIGN KEY.
+/// Collection IDs that don't exist in `categories` are skipped safely
+/// (INSERT ... SELECT only inserts when the collection exists), so this
+/// never triggers a FOREIGN KEY error.
 pub async fn set_book_categories(
     pool: &SqlitePool,
     book_id: &str,
     category_ids: &[String],
 ) -> Result<Vec<String>, sqlx::Error> {
-    // Gunakan transaksi agar penghapusan & penambahan atomic
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM book_categories WHERE book_id = ?")
         .bind(book_id)
@@ -645,8 +641,8 @@ pub async fn set_book_categories(
 mod tests {
     use super::*;
 
-    /// Satu koneksi saja: setiap koneksi `sqlite::memory:` punya database
-    /// kosong sendiri, jadi pool dengan >1 koneksi bisa "kehilangan" tabel.
+    /// A single connection: every `sqlite::memory:` connection has its own empty
+    /// database, so a pool with >1 connection can "lose" the tables.
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -670,7 +666,7 @@ mod tests {
     async fn test_categories_crud() {
         let pool = test_pool().await;
 
-        // 5 kategori bawaan + 1 baru
+        // 5 built-in collections + 1 new
         let created = create_category(&pool, "Rust").await.unwrap();
         assert_eq!(created.id, "rust");
         let cats = get_categories(&pool).await.unwrap();
@@ -713,7 +709,7 @@ mod tests {
             &["programming".to_string(), "does-not-exist".to_string()],
         )
         .await
-        .expect("kategori tak dikenal tidak boleh membuat error");
+        .expect("an unknown collection must not cause an error");
         assert_eq!(saved, vec!["Programming".to_string()]);
     }
 
@@ -774,13 +770,11 @@ mod tests {
         assert_eq!(count_users(&pool).await.unwrap(), 0);
         let id = create_first_user(&pool, "Reza", "hash1").await.unwrap();
         assert!(id.is_some());
-        // Akun kedua lewat setup harus ditolak
         assert_eq!(
             create_first_user(&pool, "lain", "hash2").await.unwrap(),
             None
         );
         assert_eq!(count_users(&pool).await.unwrap(), 1);
-        // Username tidak peka huruf besar/kecil
         let u = find_user(&pool, "reza").await.unwrap().unwrap();
         assert_eq!(u.username, "Reza");
         assert!(find_user(&pool, "orang").await.unwrap().is_none());
@@ -823,7 +817,7 @@ mod tests {
         save_progress(&pool, "1", 9, 256).await.unwrap();
         let report = migrate_legacy_book_ids(&pool, &[], None).await.unwrap();
         assert_eq!(report, IdMigrationReport::default());
-        // Data lama masih utuh, dan migrasi belum ditandai selesai
+        // Old data still intact, and the migration isn't marked as done
         assert!(get_progress(&pool, "1").await.is_some());
         let scheme: Option<String> =
             sqlx::query_scalar("SELECT value FROM meta WHERE key = 'book_id_scheme'")
@@ -836,7 +830,7 @@ mod tests {
     #[tokio::test]
     async fn test_legacy_id_migration() {
         let pool = test_pool().await;
-        // Data gaya lama: ID = urutan file
+        // Old-style data: ID = file order
         save_progress(&pool, "1", 9, 256).await.unwrap();
         save_progress(&pool, "4", 2, 250).await.unwrap();
         set_book_categories(&pool, "1", &["philosophy".to_string()])
@@ -847,7 +841,7 @@ mod tests {
             .unwrap();
         set_book_categories(&pool, "9", &["fiction".to_string()])
             .await
-            .unwrap(); // file sudah hilang
+            .unwrap(); // file is gone
 
         let legacy = vec![
             ("1".to_string(), "A.pdf".to_string()),
@@ -877,7 +871,7 @@ mod tests {
         );
         assert!(!map.contains_key("9"));
 
-        // Kedua kali: tidak melakukan apa-apa
+        // Second run: does nothing
         save_progress(&pool, "2", 1, 10).await.unwrap();
         let again = migrate_legacy_book_ids(&pool, &legacy, None).await.unwrap();
         assert_eq!(again, IdMigrationReport::default());

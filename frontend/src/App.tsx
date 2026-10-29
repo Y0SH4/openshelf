@@ -68,7 +68,6 @@ export default function App() {
     readPref("openshelf_view", "grid", ["grid", "list"] as const)
   )
 
-  // Theme → <html> class + browser chrome color
   useEffect(() => {
     const root = document.documentElement
     root.classList.remove("dark", "sepia")
@@ -111,7 +110,6 @@ export default function App() {
       .catch((err) => console.error("Failed to load collections:", err))
   }, [])
 
-  // 1. Who am I? (setup needed / signed in / signed out)
   const checkAuth = useCallback(() => {
     fetch("/api/auth/status", { credentials: "same-origin" })
       .then((res) => {
@@ -129,7 +127,6 @@ export default function App() {
     checkAuth()
   }, [checkAuth])
 
-  // 2. Session expired / signed out elsewhere → back to the sign-in page
   useEffect(() => {
     const onUnauthorized = () => {
       setSelectedBook(null)
@@ -140,7 +137,6 @@ export default function App() {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
   }, [])
 
-  // 3. Load the library once signed in
   const isReady = auth.status === "ready"
   useEffect(() => {
     if (!isReady) return
@@ -171,7 +167,6 @@ export default function App() {
     fetchCategories()
   }, [fetchBooks, fetchCategories])
 
-  // Filter + sort, memoized: O(N log N) only when inputs change
   const filteredBooks = useMemo(() => {
     const query = search.trim().toLowerCase()
     const result = books.filter((b) => {
@@ -243,7 +238,6 @@ export default function App() {
 
   const closeManaging = useCallback(() => setManagingBook(null), [])
 
-  // Sign-in gate
   if (auth.status === "checking") {
     return <div className="min-h-[100dvh] bg-background" aria-busy="true" />
   }
@@ -279,7 +273,6 @@ export default function App() {
     )
   }
 
-  // Settings page
   if (view === "settings") {
     return (
       <SettingsView
@@ -292,7 +285,6 @@ export default function App() {
     )
   }
 
-  // Reading mode
   if (selectedBook) {
     return (
       <ReaderView

@@ -19,11 +19,10 @@ interface PdfPageProps {
 }
 
 /**
- * One PDF page on a "sheet of paper".
  * - Lazy canvas rendering near the viewport; canvas is dropped when far away.
  * - Mid-viewport detection reports the current page.
  * - HiDPI rendering (capped at 2x).
- * - Sepia / dark page tint via CSS filters (like Kindle page colors).
+ * - Sepia / dark page tint via CSS filters.
  */
 export const PdfPage: React.FC<PdfPageProps> = React.memo(
   ({ doc, pageNumber, scale, theme, baseSize, onPageVisible }) => {
@@ -74,7 +73,6 @@ export const PdfPage: React.FC<PdfPageProps> = React.memo(
       return () => observer.disconnect()
     }, [])
 
-    // 3. Render with PDF.js
     useEffect(() => {
       if (!isNearViewport) return
 

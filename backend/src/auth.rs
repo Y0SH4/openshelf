@@ -1,10 +1,10 @@
-//! Login: satu akun + session cookie.
+//! Sign-in: one account + session cookie.
 //!
-//! - Pertama kali dibuka (belum ada akun) → halaman "Create account". Butuh
-//!   kode setup yang dicetak di log server, supaya orang lain di jaringan
-//!   yang sama tidak bisa mendahului pemilik server membuat akun.
-//! - Login → token acak disimpan (di-hash) di tabel `sessions` dan dikirim lewat cookie.
-//! - Middleware `require_session` memeriksa cookie di setiap request `/api/*`.
+//! - First visit (no account yet) → "Create account" page. Requires the
+//!   setup code printed in the server log, so nobody else on the same
+//!   network can create the account before the server's owner does.
+//! - Sign-in → a random token is stored (hashed) in `sessions` and sent as a cookie.
+//! - The `require_session` middleware checks the cookie on every `/api/*` request.
 
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::{
@@ -26,7 +26,7 @@ use crate::routes::{ApiError, AppState};
 use crate::security;
 
 pub const SESSION_COOKIE: &str = "openshelf_session";
-pub const SESSION_TTL_SECS: i64 = 30 * 24 * 60 * 60; // 30 hari
+pub const SESSION_TTL_SECS: i64 = 30 * 24 * 60 * 60; // 30 days
 
 // ---------------------------------------------------------------------------
 // Password & token
@@ -54,23 +54,23 @@ fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Token session acak 32 byte (64 karakter hex).
+/// Random 32-byte session token (64 hex characters).
 pub fn new_session_token() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     to_hex(&bytes)
 }
 
-/// Yang disimpan di database: SHA-256 dari token.
+/// What's stored in the database: the SHA-256 of the token.
 pub fn hash_token(token: &str) -> String {
     to_hex(&Sha256::digest(token.as_bytes()))
 }
 
-/// Huruf & angka yang tidak mudah tertukar (tanpa I, O, 0, 1). Tepat 32
-/// karakter, jadi `byte % 32` tidak berat sebelah.
+/// Letters and digits that are hard to mix up (no I, O, 0, 1). Exactly 32
+/// characters, so `byte % 32` isn't biased.
 const SETUP_CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-/// Kode setup acak, mis. "K7QM-2XRD" (40 bit; ditambah batas percobaan per IP).
+/// Random setup code, e.g. "K7QM-2XRD" (40 bits, plus the per-IP attempt limit).
 pub fn new_setup_code() -> String {
     let mut bytes = [0u8; 8];
     OsRng.fill_bytes(&mut bytes);
@@ -81,7 +81,7 @@ pub fn new_setup_code() -> String {
     format!("{}-{}", &chars[..4], &chars[4..])
 }
 
-/// "k7qm 2xrd" dan "K7QM-2XRD" dianggap sama.
+/// "k7qm 2xrd" and "K7QM-2XRD" are treated as equal.
 fn normalize_setup_code(code: &str) -> String {
     code.chars()
         .filter(char::is_ascii_alphanumeric)
@@ -90,7 +90,7 @@ fn normalize_setup_code(code: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Validasi
+// Validation
 // ---------------------------------------------------------------------------
 
 pub fn validate_username(username: &str) -> Result<(), &'static str> {
@@ -193,7 +193,7 @@ async fn start_session(
     Ok(res)
 }
 
-/// GET /api/auth/status — perlu buat akun? siapa yang sedang login?
+/// GET /api/auth/status — is setup needed? who is signed in?
 pub async fn status(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -220,9 +220,9 @@ pub async fn status(
     }))
 }
 
-/// POST /api/auth/setup — membuat akun pertama (hanya jika belum ada akun).
-/// Butuh kode setup dari log server; salah kode dihitung sebagai percobaan
-/// login gagal (lihat `security.rs`).
+/// POST /api/auth/setup — creates the first account (only if none exists).
+/// Requires the setup code from the server log; a wrong code counts as a
+/// failed sign-in attempt (see `security.rs`).
 pub async fn setup(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -243,7 +243,7 @@ pub async fn setup(
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     let Some(expected) = expected else {
-        // Kode hanya dibuat saat server start tanpa akun
+        // The code is only generated when the server starts without an account
         return Err(ApiError::conflict(
             "An account already exists. Please sign in.",
         ));
@@ -256,7 +256,7 @@ pub async fn setup(
         ));
     }
 
-    // Argon2 butuh ±50–100 ms CPU → jalankan di luar thread async
+    // Argon2 takes ~50–100 ms of CPU → run it off the async threads
     let password = payload.password;
     let hash = tokio::task::spawn_blocking(move || hash_password(&password))
         .await
@@ -278,13 +278,13 @@ pub async fn setup(
     start_session(&state, id, username).await
 }
 
-/// Hash Argon2 cadangan untuk username yang tidak ada. Password tetap dicek
-/// terhadap hash ini, supaya waktu respons sama dengan username yang ada;
-/// tanpa ini, username bisa ditebak dari cepat-lambatnya jawaban.
+/// Fallback Argon2 hash for usernames that don't exist. The password is still
+/// checked against it, so the response time matches an existing username;
+/// without this, usernames could be guessed from how fast the reply comes.
 static DUMMY_HASH: LazyLock<String> =
     LazyLock::new(|| hash_password("openshelf-dummy-password").unwrap_or_default());
 
-/// Membuat `DUMMY_HASH` saat start (blocking — panggil lewat `spawn_blocking`).
+/// Builds `DUMMY_HASH` at startup (blocking — call via `spawn_blocking`).
 pub fn warm_up() {
     LazyLock::force(&DUMMY_HASH);
 }
@@ -306,7 +306,7 @@ fn too_many_attempts(wait: Duration) -> Response {
 }
 
 /// POST /api/auth/login
-/// Maksimal 5 percobaan gagal per IP per 15 menit (lihat `security.rs`).
+/// At most 5 failed attempts per IP per 15 minutes (see `security.rs`).
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -357,7 +357,7 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
     res
 }
 
-/// Middleware: semua `/api/*` wajib login, kecuali `/api/health` dan `/api/auth/*`.
+/// Middleware: every `/api/*` route requires sign-in, except `/api/health` and `/api/auth/*`.
 pub async fn require_session(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
     let is_public =

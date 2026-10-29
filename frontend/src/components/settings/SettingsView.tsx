@@ -31,9 +31,6 @@ const Section: React.FC<{ title: string; description?: string; children: React.R
   </section>
 )
 
-/**
- * Kindle-style Settings page: library folders, page color, account.
- */
 export const SettingsView: React.FC<SettingsViewProps> = ({
   username,
   theme,
@@ -132,7 +129,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground">
-      {/* Toolbar */}
       <div className="sticky top-0 z-30 bg-background border-b border-foreground">
         <div className="max-w-3xl mx-auto px-2 sm:px-6 h-14 flex items-center gap-2">
           <button

@@ -38,13 +38,6 @@ const SORT_LABELS: Record<SortMode, string> = {
   file: "File name",
 }
 
-/**
- * Kindle Library header:
- *  - top toolbar (wordmark, search, Aa)
- *  - big "Library" heading
- *  - All / PDF / EPUB tabs underlined like Kindle's "All | Downloaded"
- *  - Sort + Grid/List switch on the right
- */
 export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
   ({
     search,
@@ -129,7 +122,6 @@ export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
         </div>
 
         <header>
-        {/* Title */}
         <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-7 pb-2 flex items-end justify-between gap-4">
           <h1 className="font-serif text-3xl sm:text-4xl font-bold tracking-tight">
             Library
@@ -141,7 +133,6 @@ export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
           </span>
         </div>
 
-        {/* Tabs + sort + view */}
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between gap-4 border-b border-rule">
           <nav className="flex items-center gap-6" aria-label="Format">
             {FORMAT_TABS.map((tab) => {

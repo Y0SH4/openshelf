@@ -1,13 +1,13 @@
-//! Menyajikan hasil build frontend (`frontend/dist`) dari backend, supaya di
-//! homeserver cukup satu program: buka `http://server:3000` dan selesai.
+//! Serves the built frontend (`frontend/dist`) from the backend, so a
+//! homeserver needs just one program: open `http://server:3000` and done.
 //!
-//! - `/assets/*`  file JS/CSS dari Vite. Nama filenya berisi hash isi
-//!   (mis. `index-DbR01WFa.js`), jadi boleh di-cache browser selamanya.
-//! - URL lain     file di `dist/` jika ada (favicon, dll.), selain itu
-//!   `index.html` agar SPA tetap jalan saat halaman di-refresh.
-//!   Selalu `no-cache` supaya browser langsung memakai build terbaru.
+//! - `/assets/*`  JS/CSS from Vite. File names contain a content hash
+//!   (e.g. `index-DbR01WFa.js`), so browsers may cache them forever.
+//! - other URLs  the file in `dist/` if it exists (favicon, etc.), else
+//!   `index.html` so the SPA still works when a page is reloaded.
+//!   Always `no-cache` so browsers pick up a new build right away.
 //!
-//! Saat development, Vite yang menyajikan frontend; modul ini tidak dipakai.
+//! In development Vite serves the frontend; this module isn't used.
 
 use axum::{
     Router,
@@ -17,8 +17,8 @@ use std::path::Path;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
 
-/// Route untuk file frontend, atau `None` jika `dist/index.html` belum ada
-/// (frontend belum di-build).
+/// Routes for the frontend files, or `None` if `dist/index.html` doesn't
+/// exist (frontend not built).
 pub fn routes<S>(dist: &Path) -> Option<Router<S>>
 where
     S: Clone + Send + Sync + 'static,
@@ -28,8 +28,8 @@ where
         return None;
     }
 
-    // Hanya respons sukses: 404 (mis. build lama minta file yang sudah hilang)
-    // tidak boleh tersimpan di cache browser selama setahun.
+    // Successful responses only: a 404 (e.g. an old build asking for a file
+    // that's gone) must not stay in the browser cache for a year.
     let assets = SetResponseHeader::overriding(
         ServeDir::new(dist.join("assets")),
         header::CACHE_CONTROL,
@@ -52,7 +52,7 @@ where
     )
 }
 
-/// `/api/...` yang tidak dikenal → 404, bukan `index.html`.
+/// Unknown `/api/...` → 404, not `index.html`.
 pub async fn api_not_found() -> (StatusCode, &'static str) {
     (StatusCode::NOT_FOUND, "Not found")
 }

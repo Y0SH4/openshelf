@@ -8,7 +8,6 @@ interface LoginScreenProps {
 }
 
 /**
- * Kindle-style sign-in page.
  *  - login: username + password
  *  - setup: first run (no account yet) — setup code from the server log,
  *    username, password, confirm password

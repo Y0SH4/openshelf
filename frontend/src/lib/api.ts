@@ -1,8 +1,8 @@
 /**
- * fetch() untuk API OpenShelf.
- * - Mengirim cookie session (same-origin).
- * - Jika server menjawab 401 (session habis / logout di tab lain), memberi tahu
- *   App lewat event agar layar login ditampilkan lagi.
+ * fetch() for the OpenShelf API.
+ * - Sends the session cookie (same-origin).
+ * - If the server answers 401 (session expired / signed out in another tab),
+ *   notifies App through an event so the sign-in screen is shown again.
  */
 export const UNAUTHORIZED_EVENT = "openshelf:unauthorized"
 
@@ -14,7 +14,7 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
   return res
 }
 
-/** Pesan error dari server (teks), atau fallback jika kosong. */
+/** Error message from the server (text), or the fallback if empty. */
 export async function readError(res: Response, fallback: string): Promise<string> {
   try {
     const text = (await res.text()).trim()
