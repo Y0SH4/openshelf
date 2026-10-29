@@ -122,10 +122,7 @@ mod tests {
             "{0}/a:{0}/a/inner:{0}/b:{0}/b:{0}/tidak-ada",
             base.display()
         );
-        assert_eq!(
-            browse_roots(Some(list)),
-            [base.join("a"), base.join("b")]
-        );
+        assert_eq!(browse_roots(Some(list)), [base.join("a"), base.join("b")]);
         assert_eq!(browse_roots(Some("/".into())), [PathBuf::from("/")]);
         std::fs::remove_dir_all(&base).unwrap();
     }

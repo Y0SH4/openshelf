@@ -63,7 +63,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = React.memo(
           setError((await res.text()) || `Couldn't create collection (${res.status})`)
         }
       } catch (err) {
-        console.error("Gagal membuat kategori:", err)
+        console.error("Failed to create collection:", err)
         setError("Could not reach the server.")
       } finally {
         setSubmitting(false)

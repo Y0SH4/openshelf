@@ -45,9 +45,7 @@ impl LoginLimiter {
     fn begin_at(&self, ip: IpAddr, now: Instant) -> Result<(), Duration> {
         let mut map = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() >= MAX_TRACKED && !map.contains_key(&ip) {
-            map.retain(|_, a| {
-                a.locked_until.is_some_and(|t| t > now) || now - a.first_at < WINDOW
-            });
+            map.retain(|_, a| a.locked_until.is_some_and(|t| t > now) || now - a.first_at < WINDOW);
         }
 
         let entry = map.entry(ip).or_insert(Attempts {
@@ -114,11 +112,18 @@ mod tests {
         assert_eq!(limiter.begin_at(ip, t0), Err(LOCKOUT));
         // Masih terkunci, sisa waktu berkurang
         let later = t0 + Duration::from_secs(60);
-        assert_eq!(limiter.begin_at(ip, later), Err(LOCKOUT - Duration::from_secs(60)));
+        assert_eq!(
+            limiter.begin_at(ip, later),
+            Err(LOCKOUT - Duration::from_secs(60))
+        );
         // IP lain tidak terpengaruh
         assert!(limiter.begin_at(other, later).is_ok());
         // Setelah LOCKOUT selesai boleh mencoba lagi
-        assert!(limiter.begin_at(ip, t0 + LOCKOUT + Duration::from_secs(1)).is_ok());
+        assert!(
+            limiter
+                .begin_at(ip, t0 + LOCKOUT + Duration::from_secs(1))
+                .is_ok()
+        );
     }
 
     #[test]

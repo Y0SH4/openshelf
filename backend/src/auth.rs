@@ -63,7 +63,7 @@ pub fn new_session_token() -> String {
 
 /// Yang disimpan di database: SHA-256 dari token.
 pub fn hash_token(token: &str) -> String {
-    to_hex(Sha256::digest(token.as_bytes()).as_slice())
+    to_hex(&Sha256::digest(token.as_bytes()))
 }
 
 /// Huruf & angka yang tidak mudah tertukar (tanpa I, O, 0, 1). Tepat 32
@@ -249,7 +249,7 @@ pub async fn setup(
         ));
     };
     if normalize_setup_code(&payload.setup_code) != normalize_setup_code(&expected) {
-        eprintln!("⚠️  Kode setup salah dari {ip}");
+        eprintln!("⚠️  Wrong setup code from {ip}");
         return Err(ApiError(
             StatusCode::UNAUTHORIZED,
             "Wrong setup code. It's printed in the server log when OpenShelf starts.".into(),
@@ -332,7 +332,7 @@ pub async fn login(
         .unwrap_or(false);
 
     let Some(user) = user.filter(|_| password_ok) else {
-        eprintln!("⚠️  Login gagal dari {ip}");
+        eprintln!("⚠️  Failed sign-in from {ip}");
         return Err(ApiError(
             StatusCode::UNAUTHORIZED,
             "Wrong username or password".into(),

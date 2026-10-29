@@ -26,7 +26,7 @@ pub async fn init_db(db_path: &Path) -> Result<SqlitePool, sqlx::Error> {
 
     migrate(&pool).await?;
 
-    println!("📦 Database SQLite siap di {}", db_path.display());
+    println!("📦 SQLite database ready at {}", db_path.display());
     Ok(pool)
 }
 
@@ -195,8 +195,8 @@ pub async fn migrate_legacy_book_ids(
     // Coba lagi di start berikutnya setelah BOOKS_DIR benar.
     if legacy_rows > 0 && legacy.is_empty() {
         eprintln!(
-            "⚠️  Ada {legacy_rows} data dengan ID lama tapi folder buku kosong/tidak terbaca. \
-             Migrasi ID ditunda; periksa BOOKS_DIR."
+            "⚠️  Found {legacy_rows} rows with old book IDs, but the books folder is empty \
+             or unreadable. Book ID migration postponed; check BOOKS_DIR."
         );
         return Ok(report);
     }
@@ -730,7 +730,7 @@ mod tests {
         assert!(delete_category(&pool, "fiction").await.unwrap());
         assert!(!delete_category(&pool, "fiction").await.unwrap());
         let map = get_all_book_categories_map(&pool).await;
-        assert!(map.get("1").is_none());
+        assert!(!map.contains_key("1"));
     }
 
     #[tokio::test]
@@ -864,7 +864,7 @@ mod tests {
             map.get(&book_id_for("C.epub")),
             Some(&vec!["Fiction".to_string()])
         );
-        assert!(map.get("9").is_none());
+        assert!(!map.contains_key("9"));
 
         // Kedua kali: tidak melakukan apa-apa
         save_progress(&pool, "2", 1, 10).await.unwrap();

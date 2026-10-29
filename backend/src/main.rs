@@ -29,22 +29,25 @@ async fn main() {
 
     let pool = db::init_db(&config.db_path())
         .await
-        .expect("Gagal menginisialisasi database SQLite");
+        .expect("Failed to initialize the SQLite database");
 
     // Folder library diatur di halaman Settings. BOOKS_DIR (opsional) hanya
     // dipakai sekali sebagai folder awal jika daftar folder masih kosong.
     let mut folders = db::list_folders(&pool)
         .await
-        .expect("Gagal membaca folder library");
-    if folders.is_empty() {
-        if let Some(seed) = config.seed_books_dir.as_ref().filter(|p| p.is_dir()) {
-            match db::add_folder(&pool, &seed.to_string_lossy()).await {
-                Ok(folder) => {
-                    println!("📚 Folder library awal dari BOOKS_DIR: {}", folder.path);
-                    folders.push(folder);
-                }
-                Err(e) => eprintln!("⚠️  Gagal menambah BOOKS_DIR sebagai folder library: {e}"),
+        .expect("Failed to read library folders");
+    if folders.is_empty()
+        && let Some(seed) = config.seed_books_dir.as_ref().filter(|p| p.is_dir())
+    {
+        match db::add_folder(&pool, &seed.to_string_lossy()).await {
+            Ok(folder) => {
+                println!(
+                    "📚 Added BOOKS_DIR as the first library folder: {}",
+                    folder.path
+                );
+                folders.push(folder);
             }
+            Err(e) => eprintln!("⚠️  Couldn't add BOOKS_DIR as a library folder: {e}"),
         }
     }
     let roots: Vec<LibraryRoot> = folders
@@ -63,21 +66,21 @@ async fn main() {
     match db::migrate_legacy_book_ids(&pool, &legacy, Some(&config.db_path())).await {
         Ok(report) if report.migrated_rows > 0 || report.dropped_orphans > 0 => {
             println!(
-                "🔁 Migrasi ID buku: {} baris dipindah, {} baris yatim dihapus. Backup: {}",
+                "🔁 Book ID migration: {} rows moved, {} orphaned rows removed. Backup: {}",
                 report.migrated_rows,
                 report.dropped_orphans,
                 report.backup.as_deref().unwrap_or("-")
             );
         }
         Ok(_) => {}
-        Err(e) => panic!("Migrasi ID buku gagal (database tidak diubah): {e}"),
+        Err(e) => panic!("Book ID migration failed (database unchanged): {e}"),
     }
 
     if roots.is_empty() {
-        println!("📚 Belum ada folder library — tambahkan lewat Settings di aplikasi.");
+        println!("📚 No library folders yet. Add one in Settings in the app.");
     } else {
         for root in &roots {
-            println!("📚 Folder library: {}", root.path.display());
+            println!("📚 Library folder: {}", root.path.display());
         }
     }
 
@@ -88,7 +91,7 @@ async fn main() {
         let library = library.clone();
         tokio::spawn(async move {
             let count = library.books().await.books().len();
-            println!("📚 Scan awal selesai: {count} buku");
+            println!("📚 Initial scan done: {count} books");
         });
     }
 
@@ -97,10 +100,17 @@ async fn main() {
     tokio::task::spawn_blocking(auth::warm_up);
 
     if config.browse_roots.is_empty() {
-        println!("📂 Memilih folder di Settings dimatikan (OPENSHELF_BROWSE_ROOTS kosong)");
+        println!("📂 Choosing folders in Settings is turned off (OPENSHELF_BROWSE_ROOTS is empty)");
     } else {
-        let list: Vec<_> = config.browse_roots.iter().map(|p| p.display().to_string()).collect();
-        println!("📂 Folder yang boleh dipilih di Settings: {}", list.join(", "));
+        let list: Vec<_> = config
+            .browse_roots
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        println!(
+            "📂 Folders that can be chosen in Settings: {}",
+            list.join(", ")
+        );
     }
 
     // Belum ada akun → kode setup, wajib dimasukkan saat membuat akun pertama
@@ -115,7 +125,7 @@ async fn main() {
             Some(code)
         }
         Ok(_) => None,
-        Err(e) => panic!("Gagal membaca akun: {e}"),
+        Err(e) => panic!("Failed to read accounts: {e}"),
     };
 
     let state = AppState {
@@ -160,12 +170,15 @@ async fn main() {
     // Hasil build frontend (production). Saat development Vite yang menyajikannya.
     let app = match frontend::routes(&config.frontend_dir) {
         Some(files) => {
-            println!("🖥️  Frontend disajikan dari {}", config.frontend_dir.display());
+            println!(
+                "🖥️  Serving frontend from {}",
+                config.frontend_dir.display()
+            );
             app.merge(files)
         }
         None => {
             println!(
-                "🖥️  Frontend belum di-build ({} tidak ada) — pakai `pnpm dev` atau `just build`",
+                "🖥️  Frontend not built ({} not found). Use `just dev` or run `just build` first",
                 config.frontend_dir.display()
             );
             app
@@ -211,7 +224,7 @@ async fn main() {
                 .allow_credentials(true),
         ),
         Some(Err(_)) => {
-            eprintln!("⚠️  OPENSHELF_CORS_ORIGIN tidak valid, CORS dimatikan");
+            eprintln!("⚠️  OPENSHELF_CORS_ORIGIN is invalid, CORS disabled");
             app
         }
         None => app,
@@ -219,7 +232,7 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&config.bind_addr)
         .await
-        .unwrap_or_else(|e| panic!("Tidak bisa listen di {}: {e}", config.bind_addr));
+        .unwrap_or_else(|e| panic!("Can't listen on {}: {e}", config.bind_addr));
 
     println!("OpenShelf backend running on http://{}", config.bind_addr);
     if let Ok(addr) = listener.local_addr()
@@ -227,10 +240,9 @@ async fn main() {
         && !config.secure_cookies
     {
         println!(
-            "⚠️  Server bisa diakses dari jaringan lewat HTTP biasa (tanpa enkripsi). \
-             Aman untuk jaringan rumah; untuk akses dari internet pasang HTTPS \
-             (mis. Caddy/Nginx) lalu set OPENSHELF_SECURE_COOKIE=true dan \
-             OPENSHELF_TRUST_PROXY=true."
+            "⚠️  Reachable from the network over plain HTTP (not encrypted). Fine on a \
+             home network; for internet access put it behind HTTPS (e.g. Caddy or \
+             Nginx) and set OPENSHELF_SECURE_COOKIE=true and OPENSHELF_TRUST_PROXY=true."
         );
     }
 

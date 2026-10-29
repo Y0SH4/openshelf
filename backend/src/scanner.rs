@@ -141,7 +141,7 @@ pub fn scan_roots(roots: &[LibraryRoot]) -> Vec<BookItem> {
 fn walk_dir(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<(String, PathBuf, BookFormat)>) {
     let Ok(entries) = fs::read_dir(dir) else {
         if depth == 0 {
-            eprintln!("⚠️  Folder library tidak bisa dibaca: {}", dir.display());
+            eprintln!("⚠️  Can't read library folder: {}", dir.display());
         }
         return;
     };
@@ -167,10 +167,10 @@ fn walk_dir(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<(String, PathB
             if depth < MAX_DEPTH {
                 walk_dir(&path, &rel, depth + 1, out);
             }
-        } else if file_type.is_file() || (file_type.is_symlink() && path.is_file()) {
-            if let Some(format) = BookFormat::from_path(&path) {
-                out.push((rel, path, format));
-            }
+        } else if (file_type.is_file() || (file_type.is_symlink() && path.is_file()))
+            && let Some(format) = BookFormat::from_path(&path)
+        {
+            out.push((rel, path, format));
         }
     }
 }
@@ -319,7 +319,11 @@ impl Library {
 
     /// Hasil scan yang masih berlaku (bukan dari sebelum `invalidate`).
     fn snapshot(&self) -> Option<Arc<Snapshot>> {
-        let snap = self.cache.read().unwrap_or_else(|e| e.into_inner()).clone()?;
+        let snap = self
+            .cache
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()?;
         (snap.generation == self.generation.load(Ordering::Acquire)).then_some(snap)
     }
 
@@ -351,7 +355,7 @@ impl Library {
         })
         .await;
         let Ok((mtimes, books)) = scanned else {
-            eprintln!("❌ Scan library gagal (thread scan panic)");
+            eprintln!("❌ Library scan failed (scan thread panicked)");
             return Arc::new(Catalog::empty());
         };
 
@@ -406,7 +410,7 @@ impl Library {
         })
         .await;
         let Ok((mtimes, books)) = checked else {
-            eprintln!("❌ Scan ulang library gagal (thread scan panic)");
+            eprintln!("❌ Library rescan failed (scan thread panicked)");
             return;
         };
 
@@ -463,19 +467,19 @@ pub async fn extract_pdf_cover(
     cache_dir: &Path,
 ) -> Option<(Vec<u8>, String)> {
     let cached_file = cache_dir.join(format!("{book_id}.png"));
-    if is_fresh(&cached_file, file_path) {
-        if let Ok(bytes) = tokio::fs::read(&cached_file).await {
-            return Some((bytes, "image/png".into()));
-        }
+    if is_fresh(&cached_file, file_path)
+        && let Ok(bytes) = tokio::fs::read(&cached_file).await
+    {
+        return Some((bytes, "image/png".into()));
     }
 
     let _permit = PDFTOPPM_SLOTS.acquire().await.ok()?;
 
     // Request lain mungkin sudah membuatnya selagi kita menunggu antrian
-    if is_fresh(&cached_file, file_path) {
-        if let Ok(bytes) = tokio::fs::read(&cached_file).await {
-            return Some((bytes, "image/png".into()));
-        }
+    if is_fresh(&cached_file, file_path)
+        && let Ok(bytes) = tokio::fs::read(&cached_file).await
+    {
+        return Some((bytes, "image/png".into()));
     }
 
     tokio::fs::create_dir_all(cache_dir).await.ok()?;

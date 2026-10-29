@@ -73,7 +73,7 @@ async fn find_book(state: &AppState, id: &str) -> Result<BookItem, ApiError> {
         .library
         .find(id)
         .await
-        .ok_or_else(|| ApiError::not_found("Buku tidak ditemukan"))
+        .ok_or_else(|| ApiError::not_found("Book not found"))
 }
 
 // ---------------------------------------------------------------------------
@@ -232,11 +232,11 @@ pub async fn get_book_raw(
 
     let mut file = tokio::fs::File::open(&path)
         .await
-        .map_err(|e| ApiError::internal("Gagal membuka file buku", e))?;
+        .map_err(|e| ApiError::internal("Failed to open the book file", e))?;
     let len = file
         .metadata()
         .await
-        .map_err(|e| ApiError::internal("Gagal membaca info file", e))?
+        .map_err(|e| ApiError::internal("Failed to read file info", e))?
         .len();
 
     let range = parse_range(
@@ -262,7 +262,7 @@ pub async fn get_book_raw(
         RangeRequest::Partial { start, end } => {
             file.seek(SeekFrom::Start(start))
                 .await
-                .map_err(|e| ApiError::internal("Gagal membaca file buku", e))?;
+                .map_err(|e| ApiError::internal("Failed to read the book file", e))?;
             let count = end - start + 1;
             builder
                 .status(StatusCode::PARTIAL_CONTENT)
@@ -276,7 +276,7 @@ pub async fn get_book_raw(
             .body(Body::empty()),
     };
 
-    response.map_err(|e| ApiError::internal("Gagal membuat response", e))
+    response.map_err(|e| ApiError::internal("Failed to build the response", e))
 }
 
 /// GET /api/books/{id}/cover
@@ -358,22 +358,22 @@ pub async fn save_book_progress(
     } = payload;
     if !(1..=1_000_000).contains(&total_pages) {
         return Err(ApiError::bad_request(
-            "total_pages harus antara 1 dan 1.000.000",
+            "total_pages must be between 1 and 1,000,000",
         ));
     }
     if !(1..=total_pages).contains(&current_page) {
         return Err(ApiError::bad_request(
-            "current_page harus antara 1 dan total_pages",
+            "current_page must be between 1 and total_pages",
         ));
     }
 
     db::save_progress(&state.pool, &id, current_page, total_pages)
         .await
-        .map_err(|e| ApiError::internal("Gagal menyimpan progres", e))?;
+        .map_err(|e| ApiError::internal("Failed to save reading progress", e))?;
 
     let progress = db::get_progress(&state.pool, &id)
         .await
-        .ok_or_else(|| ApiError::internal("Gagal membaca progres tersimpan", "tidak ada baris"))?;
+        .ok_or_else(|| ApiError::internal("Failed to read saved progress", "no row"))?;
 
     Ok(Json(progress))
 }
@@ -385,7 +385,7 @@ pub async fn get_categories(
     db::get_categories(&pool)
         .await
         .map(Json)
-        .map_err(|e| ApiError::internal("Gagal mengambil daftar koleksi", e))
+        .map_err(|e| ApiError::internal("Failed to load collections", e))
 }
 
 // POST /api/categories
@@ -395,21 +395,21 @@ pub async fn create_category(
 ) -> Result<(StatusCode, Json<Category>), ApiError> {
     let name = payload.name.trim();
     if name.is_empty() {
-        return Err(ApiError::bad_request("Nama koleksi tidak boleh kosong"));
+        return Err(ApiError::bad_request("Collection name can't be empty"));
     }
     if name.chars().count() > MAX_CATEGORY_NAME_CHARS {
         return Err(ApiError::bad_request(format!(
-            "Nama koleksi maksimal {MAX_CATEGORY_NAME_CHARS} karakter"
+            "Collection name can be at most {MAX_CATEGORY_NAME_CHARS} characters"
         )));
     }
     if name.chars().any(char::is_control) {
         return Err(ApiError::bad_request(
-            "Nama koleksi berisi karakter yang tidak valid",
+            "Collection name contains invalid characters",
         ));
     }
     if db::slugify(name).is_empty() {
         return Err(ApiError::bad_request(
-            "Nama koleksi harus mengandung huruf atau angka",
+            "Collection name must contain a letter or number",
         ));
     }
 
@@ -419,9 +419,11 @@ pub async fn create_category(
             if e.as_database_error()
                 .is_some_and(|d| d.is_unique_violation()) =>
         {
-            Err(ApiError::conflict("Koleksi dengan nama itu sudah ada"))
+            Err(ApiError::conflict(
+                "A collection with that name already exists",
+            ))
         }
-        Err(e) => Err(ApiError::internal("Gagal membuat koleksi", e)),
+        Err(e) => Err(ApiError::internal("Failed to create collection", e)),
     }
 }
 
@@ -432,11 +434,11 @@ pub async fn delete_category(
 ) -> Result<StatusCode, ApiError> {
     let deleted = db::delete_category(&pool, &id)
         .await
-        .map_err(|e| ApiError::internal("Gagal menghapus koleksi", e))?;
+        .map_err(|e| ApiError::internal("Failed to delete collection", e))?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::not_found("Koleksi tidak ditemukan"))
+        Err(ApiError::not_found("Collection not found"))
     }
 }
 
@@ -449,14 +451,12 @@ pub async fn set_book_categories(
 ) -> Result<Json<Vec<String>>, ApiError> {
     find_book(&state, &id).await?;
     if payload.category_ids.len() > 100 {
-        return Err(ApiError::bad_request(
-            "Terlalu banyak koleksi dalam satu request",
-        ));
+        return Err(ApiError::bad_request("Too many collections in one request"));
     }
 
     let names = db::set_book_categories(&state.pool, &id, &payload.category_ids)
         .await
-        .map_err(|e| ApiError::internal("Gagal memperbarui koleksi buku", e))?;
+        .map_err(|e| ApiError::internal("Failed to update the book's collections", e))?;
     Ok(Json(names))
 }
 

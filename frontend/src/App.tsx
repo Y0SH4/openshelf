@@ -95,7 +95,7 @@ export default function App() {
         setLoading(false)
       })
       .catch((err) => {
-        console.error("Gagal mengambil daftar buku:", err)
+        console.error("Failed to load books:", err)
         setLoadError(true)
         setLoading(false)
       })
@@ -108,7 +108,7 @@ export default function App() {
         return res.json()
       })
       .then((data: CategoryItem[]) => setCategories(data))
-      .catch((err) => console.error("Gagal mengambil daftar kategori:", err))
+      .catch((err) => console.error("Failed to load collections:", err))
   }, [])
 
   // 1. Who am I? (setup needed / signed in / signed out)
