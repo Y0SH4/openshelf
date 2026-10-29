@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::io::SeekFrom;
 use std::sync::{Arc, Mutex};
@@ -379,13 +380,38 @@ pub async fn save_book_progress(
 }
 
 // GET /api/categories
+/// `book_count` only counts books currently in the library. Books from a
+/// removed folder stay in their collections but aren't counted.
 pub async fn get_categories(
-    State(pool): State<SqlitePool>,
+    State(state): State<AppState>,
 ) -> Result<Json<Vec<Category>>, ApiError> {
-    db::get_categories(&pool)
+    let mut categories = db::get_categories(&state.pool)
         .await
-        .map(Json)
-        .map_err(|e| ApiError::internal("Failed to load collections", e))
+        .map_err(|e| ApiError::internal("Failed to load collections", e))?;
+    let memberships = db::get_category_memberships(&state.pool)
+        .await
+        .map_err(|e| ApiError::internal("Failed to load collections", e))?;
+    let catalog = state.library.books().await;
+    count_books_in_library(&mut categories, &memberships, |id| {
+        catalog.find(id).is_some()
+    });
+    Ok(Json(categories))
+}
+
+fn count_books_in_library(
+    categories: &mut [Category],
+    memberships: &[(String, String)],
+    in_library: impl Fn(&str) -> bool,
+) {
+    let mut counts: HashMap<&str, i64> = HashMap::new();
+    for (category_id, book_id) in memberships {
+        if in_library(book_id) {
+            *counts.entry(category_id.as_str()).or_default() += 1;
+        }
+    }
+    for category in categories {
+        category.book_count = counts.get(category.id.as_str()).copied().unwrap_or(0);
+    }
 }
 
 // POST /api/categories
@@ -494,6 +520,34 @@ mod tests {
         assert_eq!(parse_range(Some("bytes=abc"), 100), Full);
         assert_eq!(parse_range(Some("bytes=9-1"), 100), Full);
         assert_eq!(parse_range(Some("items=0-1"), 100), Full);
+    }
+
+    #[test]
+    fn category_counts_only_books_in_library() {
+        let cat = |id: &str| Category {
+            id: id.into(),
+            name: id.into(),
+            book_count: 99, // the SQL value (all books) must be overwritten
+        };
+        let mut categories = vec![cat("fiction"), cat("self"), cat("empty")];
+        let memberships: Vec<(String, String)> = [
+            ("fiction", "ada-1"),
+            ("self", "ada-1"),
+            ("self", "ada-2"),
+            ("self", "hilang-1"), // folder was removed
+            ("fiction", "hilang-2"),
+        ]
+        .iter()
+        .map(|(c, b)| (c.to_string(), b.to_string()))
+        .collect();
+
+        count_books_in_library(&mut categories, &memberships, |id| id.starts_with("ada"));
+        let counts: Vec<_> = categories.iter().map(|c| c.book_count).collect();
+        assert_eq!(counts, [1, 2, 0]);
+
+        // Empty library → all 0
+        count_books_in_library(&mut categories, &memberships, |_| false);
+        assert!(categories.iter().all(|c| c.book_count == 0));
     }
 
     #[test]

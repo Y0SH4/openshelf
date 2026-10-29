@@ -560,6 +560,17 @@ pub async fn delete_category(pool: &SqlitePool, category_id: &str) -> Result<boo
     Ok(res.rows_affected() > 0)
 }
 
+/// All (category_id, book_id) pairs, including books whose files aren't
+/// currently in the library (folder removed). That data is kept on purpose so
+/// the collections come back when the folder is added again.
+pub async fn get_category_memberships(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    sqlx::query_as("SELECT category_id, book_id FROM book_categories")
+        .fetch_all(pool)
+        .await
+}
+
 pub async fn get_all_book_categories_map(pool: &SqlitePool) -> HashMap<String, Vec<String>> {
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
     #[derive(sqlx::FromRow)]
