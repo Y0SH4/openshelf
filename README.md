@@ -1,5 +1,7 @@
 # OpenShelf
 
+[![CI](https://github.com/Y0SH4/openshelf/actions/workflows/ci.yml/badge.svg)](https://github.com/Y0SH4/openshelf/actions/workflows/ci.yml)
+
 A self-hosted library for your PDF and EPUB books, with a calm, Kindle-like reader in the browser.
 
 Point OpenShelf at the folders where you keep your books. It scans them (including sub-folders), shows your shelf with covers, and lets you read PDFs on any device on your network while it remembers where you left off.
@@ -35,6 +37,8 @@ To use more folders, mount them inside `/books` in `docker-compose.yml`, then ad
 ```
 
 To update: `git pull && docker compose up -d --build`.
+
+Prefer not to build? Released versions are published as a ready-made image for `amd64` and `arm64` (e.g. Raspberry Pi). In `docker-compose.yml`, replace `build: .` with `image: ghcr.io/y0sh4/openshelf:latest`, then update with `docker compose pull && docker compose up -d`.
 
 ## Run from source
 
