@@ -35,7 +35,7 @@ RUN apt-get update \
     && mkdir -p /data /books \
     && chown openshelf:openshelf /data
 
-COPY --from=backend /app/backend/target/release/openshelf-backend /usr/local/bin/openshelf
+COPY --from=backend /app/backend/target/release/openshelf /usr/local/bin/openshelf
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
 
 ENV OPENSHELF_BIND=0.0.0.0:3000 \

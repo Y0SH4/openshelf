@@ -37,4 +37,4 @@ build:
 
 # Build, then run the production version: frontend + API on one port (http://localhost:3000)
 start: build
-    ./backend/target/release/openshelf-backend
+    ./backend/target/release/openshelf
