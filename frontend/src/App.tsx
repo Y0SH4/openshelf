@@ -221,6 +221,18 @@ export default function App() {
     )
   }, [])
 
+  const handleCategoryDeleted = useCallback((deleted: CategoryItem) => {
+    setCategories((prev) => prev.filter((c) => c.id !== deleted.id))
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.categories?.includes(deleted.name)
+          ? { ...b, categories: b.categories.filter((name) => name !== deleted.name) }
+          : b
+      )
+    )
+    setSelectedCategory("all")
+  }, [])
+
   const handleBookCategoriesUpdated = useCallback(
     (bookId: string, updatedCategoryNames: string[]) => {
       setBooks((prev) =>
@@ -352,6 +364,7 @@ export default function App() {
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         onCategoryCreated={handleCategoryCreated}
+        onCategoryDeleted={handleCategoryDeleted}
         totalBooksCount={books.length}
       />
 

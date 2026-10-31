@@ -1,6 +1,6 @@
 import React, { useState } from "react"
 import { apiFetch } from "@/lib/api"
-import { Plus, X } from "lucide-react"
+import { Plus, Trash2, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export interface CategoryItem {
@@ -14,6 +14,7 @@ interface CategoryFilterBarProps {
   selectedCategory: string
   onSelectCategory: (categoryName: string) => void
   onCategoryCreated: (newCategory: CategoryItem) => void
+  onCategoryDeleted: (category: CategoryItem) => void
   totalBooksCount: number
 }
 
@@ -23,9 +24,12 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = React.memo(
     selectedCategory,
     onSelectCategory,
     onCategoryCreated,
+    onCategoryDeleted,
     totalBooksCount,
   }) => {
     const [isCreating, setIsCreating] = useState(false)
+    const [confirmDelete, setConfirmDelete] = useState(false)
+    const [deleting, setDeleting] = useState(false)
     const [newCategoryName, setNewCategoryName] = useState("")
     const [submitting, setSubmitting] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -66,6 +70,37 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = React.memo(
       }
     }
 
+    const selected = categories.find((c) => c.name === selectedCategory)
+
+    const selectCategory = (name: string) => {
+      setConfirmDelete(false)
+      setError(null)
+      onSelectCategory(name)
+    }
+
+    // Removes the collection only; its books stay in the library
+    const handleDelete = async () => {
+      if (!selected) return
+      setDeleting(true)
+      setError(null)
+      try {
+        const res = await apiFetch(`/api/categories/${encodeURIComponent(selected.id)}`, {
+          method: "DELETE",
+        })
+        if (res.ok || res.status === 404) {
+          setConfirmDelete(false)
+          onCategoryDeleted(selected)
+        } else {
+          setError((await res.text()) || `Couldn't delete collection (${res.status})`)
+        }
+      } catch (err) {
+        console.error("Failed to delete collection:", err)
+        setError("Could not reach the server.")
+      } finally {
+        setDeleting(false)
+      }
+    }
+
     const chip = (active: boolean) =>
       cn(
         "h-8 px-3 text-[13px] border shrink-0 flex items-center gap-2 whitespace-nowrap",
@@ -83,7 +118,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = React.memo(
 
           <button
             type="button"
-            onClick={() => onSelectCategory("all")}
+            onClick={() => selectCategory("all")}
             aria-pressed={selectedCategory === "all"}
             className={chip(selectedCategory === "all")}
           >
@@ -97,7 +132,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = React.memo(
               <button
                 key={cat.id}
                 type="button"
-                onClick={() => onSelectCategory(cat.name)}
+                onClick={() => selectCategory(cat.name)}
                 aria-pressed={isSelected}
                 className={chip(isSelected)}
               >
@@ -150,6 +185,41 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = React.memo(
             </button>
           )}
         </div>
+        {selected && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            {confirmDelete ? (
+              <>
+                <span>
+                  Delete “{selected.name}”? The books stay in your library.
+                </span>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="h-7 px-3 eink-selected font-semibold disabled:opacity-50"
+                >
+                  {deleting ? "Deleting…" : "Delete"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="h-7 px-3 border border-foreground hover:bg-accent"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                className="h-7 flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete collection
+              </button>
+            )}
+          </div>
+        )}
         {error && <p className="text-xs mt-2 underline decoration-dotted">{error}</p>}
       </div>
     )

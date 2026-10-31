@@ -140,18 +140,28 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
 
-    sqlx::query(
-        r#"
-        INSERT OR IGNORE INTO categories (id, name) VALUES
-            ('programming', 'Programming'),
-            ('fiction', 'Fiction'),
-            ('non-fiction', 'Non-Fiction'),
-            ('philosophy', 'Philosophy'),
-            ('favorites', 'Favorites');
-        "#,
-    )
-    .execute(pool)
-    .await?;
+    // Starter collections, created once so deleted ones don't come back
+    let seeded: Option<String> =
+        sqlx::query_scalar("SELECT value FROM meta WHERE key = 'default_collections'")
+            .fetch_optional(pool)
+            .await?;
+    if seeded.is_none() {
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO categories (id, name) VALUES
+                ('programming', 'Programming'),
+                ('fiction', 'Fiction'),
+                ('non-fiction', 'Non-Fiction'),
+                ('philosophy', 'Philosophy'),
+                ('favorites', 'Favorites');
+            "#,
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query("INSERT INTO meta (key, value) VALUES ('default_collections', 'seeded')")
+            .execute(pool)
+            .await?;
+    }
 
     Ok(())
 }
@@ -958,5 +968,20 @@ mod tests {
         // Running the migration again keeps the notes
         migrate(&pool).await.unwrap();
         assert_eq!(get_notes(&pool).await.unwrap().version, 1);
+    }
+
+    #[tokio::test]
+    async fn test_deleted_starter_collection_stays_deleted() {
+        let pool = test_pool().await;
+        assert!(delete_category(&pool, "fiction").await.unwrap());
+        migrate(&pool).await.unwrap();
+        let names: Vec<String> = get_categories(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert!(!names.contains(&"Fiction".to_string()));
+        assert!(names.contains(&"Favorites".to_string()));
     }
 }
