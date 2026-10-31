@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="OpenShelf: a book in sunglasses sitting on a bookshelf" width="360" />
+</p>
+
 # OpenShelf
 
 [![CI](https://github.com/Y0SH4/openshelf/actions/workflows/ci.yml/badge.svg)](https://github.com/Y0SH4/openshelf/actions/workflows/ci.yml)
