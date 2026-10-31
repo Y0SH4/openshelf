@@ -164,7 +164,12 @@ export default function App() {
   }, [])
 
   const openSettings = useCallback(() => setView("settings"), [])
-  const openNotes = useCallback(() => setView("notes"), [])
+  /** The note open on the Notes page (kept while a page link opens a book) */
+  const [openNoteId, setOpenNoteId] = useState<number | null>(null)
+  const openNotes = useCallback(() => {
+    setOpenNoteId(null)
+    setView("notes")
+  }, [])
   const closeNotes = useCallback(() => setView("library"), [])
 
   const openBook = useCallback((book: Book) => {
@@ -335,7 +340,14 @@ export default function App() {
   }
 
   if (view === "notes") {
-    return <NotesView onBack={closeNotes} onOpenPage={openPage} />
+    return (
+      <NotesView
+        noteId={openNoteId}
+        onOpenNote={setOpenNoteId}
+        onBack={closeNotes}
+        onOpenPage={openPage}
+      />
+    )
   }
 
   return (

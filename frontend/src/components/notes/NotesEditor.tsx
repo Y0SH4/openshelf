@@ -18,6 +18,7 @@ import {
   ListTodo,
   Minus,
   TextQuote,
+  Trash2,
   Type,
 } from "lucide-react"
 import { apiFetch } from "@/lib/api"
@@ -47,6 +48,9 @@ export interface NotesEditorHandle {
 
 interface NotesEditorProps {
   ref?: React.Ref<NotesEditorHandle>
+  noteId: number
+  /** Called after the note was deleted (here or elsewhere). */
+  onDeleted: () => void
   /** Opens a book at a page. Returns false if the book isn't in the library. */
   onOpenPage: (link: PageLink) => boolean
   /** Extra buttons at the end of the toolbar */
@@ -55,7 +59,9 @@ interface NotesEditorProps {
   toolbarClassName?: string
 }
 
-interface ServerNotes {
+interface ServerNote {
+  id: number
+  title: string
   content: string
   version: number
 }
@@ -307,17 +313,29 @@ BlockRow.displayName = "BlockRow"
 /**
  * A Notion-style page: one block per line, Markdown shortcuts
  * ("# ", "- ", "1. ", "[] ", "> ", "---"), Enter / Backspace / Tab like Notion.
- * Loads from and auto-saves to /api/notes.
+ * Loads from and auto-saves to /api/notes/{id}.
  */
-export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }: NotesEditorProps) {
+export function NotesEditor({
+  ref,
+  noteId,
+  onDeleted,
+  onOpenPage,
+  toolbarExtra,
+  toolbarClassName,
+}: NotesEditorProps) {
   const [blocks, setBlocks] = useState<Block[] | null>(null)
+  const [title, setTitle] = useState("")
   const [loadError, setLoadError] = useState(false)
+  const [missing, setMissing] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>("saved")
-  const [conflict, setConflict] = useState<ServerNotes | null>(null)
+  const [conflict, setConflict] = useState<ServerNote | null>(null)
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const blocksRef = useRef<Block[]>([])
+  const titleRef = useRef("")
+  const disposedRef = useRef(false)
   const elements = useRef(new Map<string, HTMLDivElement>())
   const pendingFocus = useRef<PendingFocus | null>(null)
   const lastFocusedRef = useRef<string | null>(null)
@@ -335,10 +353,12 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
 
   // ---------- Load & save ----------
 
-  const applyServer = useCallback((notes: ServerNotes) => {
-    const parsed = parseNotes(notes.content)
+  const applyServer = useCallback((note: ServerNote) => {
+    const parsed = parseNotes(note.content)
     blocksRef.current = parsed
-    versionRef.current = notes.version
+    titleRef.current = note.title
+    setTitle(note.title)
+    versionRef.current = note.version
     dirtyRef.current = false
     conflictRef.current = false
     setConflict(null)
@@ -348,17 +368,21 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
 
   const load = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/notes")
+      const res = await apiFetch(`/api/notes/${noteId}`)
+      if (res.status === 404) {
+        setMissing(true)
+        return
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       applyServer(await res.json())
       const pending = queued.current
       queued.current = []
       pending.forEach((fn) => fn())
     } catch (err) {
-      console.error("Failed to load notes:", err)
+      console.error("Failed to load note:", err)
       setLoadError(true)
     }
-  }, [applyServer])
+  }, [applyServer, noteId])
 
   useEffect(() => {
     load()
@@ -373,13 +397,14 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
     saveChain.current = saveChain.current.then(async () => {
       if (!dirtyRef.current || conflictRef.current) return
       const body = JSON.stringify({
+        title: titleRef.current,
         content: serializeNotes(blocksRef.current),
         base_version: versionRef.current,
       })
       dirtyRef.current = false
       setSaveState("saving")
       try {
-        const res = await apiFetch("/api/notes", {
+        const res = await apiFetch(`/api/notes/${noteId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body,
@@ -392,18 +417,25 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
           setSaveState("conflict")
           return
         }
+        if (res.status === 404) {
+          conflictRef.current = true
+          setMissing(true)
+          return
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const saved: ServerNotes = await res.json()
+        const saved: ServerNote = await res.json()
         versionRef.current = saved.version
         setSaveState(dirtyRef.current ? "unsaved" : "saved")
       } catch (err) {
-        console.error("Failed to save notes:", err)
+        console.error("Failed to save note:", err)
         dirtyRef.current = true
         setSaveState("error")
-        timerRef.current = window.setTimeout(() => retryRef.current(), RETRY_DELAY_MS)
+        if (!disposedRef.current) {
+          timerRef.current = window.setTimeout(() => retryRef.current(), RETRY_DELAY_MS)
+        }
       }
     })
-  }, [])
+  }, [noteId])
   useEffect(() => {
     retryRef.current = () => save()
   }, [save])
@@ -427,6 +459,7 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
     return () => {
       document.removeEventListener("visibilitychange", onHide)
       window.removeEventListener("pagehide", onPageHide)
+      disposedRef.current = true
       save()
     }
   }, [save])
@@ -790,6 +823,40 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
     }
   }
 
+  // ---------- Title & delete ----------
+
+  const focusFirstBlock = () => {
+    const first = blocksRef.current.find((b) => b.type !== "divider")
+    const el = first && elements.current.get(first.id)
+    if (el) placeCaret(el, "start")
+  }
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return
+    const atEnd = e.currentTarget.selectionStart === e.currentTarget.value.length
+    if (e.key === "Enter" || (e.key === "ArrowDown" && atEnd)) {
+      e.preventDefault()
+      focusFirstBlock()
+    }
+  }
+
+  const handleDelete = async () => {
+    // Stop saving first, so a pending save can't recreate the note
+    if (timerRef.current) window.clearTimeout(timerRef.current)
+    conflictRef.current = true
+    dirtyRef.current = false
+    try {
+      const res = await apiFetch(`/api/notes/${noteId}`, { method: "DELETE" })
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+      onDeleted()
+    } catch (err) {
+      console.error("Failed to delete note:", err)
+      conflictRef.current = false
+      setConfirmDelete(false)
+      setMessage("Couldn't delete this note. Try again.")
+    }
+  }
+
   // ---------- Render ----------
 
   const resolveConflict = (keepMine: boolean) => {
@@ -877,18 +944,50 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
         {toolbarExtra}
         <span
           className={cn(
-            "ml-auto pl-3 pr-2 shrink-0 text-xs",
+            "ml-auto pl-3 shrink-0 text-xs",
             saveState === "error" || saveState === "conflict" ? "font-medium" : "text-muted-foreground"
           )}
           role="status"
         >
           {blocks ? statusLabel[saveState] : ""}
         </span>
+        <button
+          type="button"
+          title="Delete note"
+          aria-label="Delete note"
+          onClick={() => setConfirmDelete(true)}
+          disabled={!blocks}
+          className={cn(toolButton, "disabled:opacity-30")}
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
       </div>
+
+      {confirmDelete && (
+        <div role="alert" className="mt-4 border-2 border-foreground p-3 text-sm">
+          <p className="font-medium">Delete this note? This can't be undone.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="h-9 px-3 eink-selected hover:opacity-90"
+            >
+              Delete note
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              className="h-9 px-3 border border-foreground hover:bg-accent"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {conflict && (
         <div role="alert" className="mt-4 border-2 border-foreground p-3 text-sm">
-          <p className="font-medium">These notes were changed in another tab or device.</p>
+          <p className="font-medium">This note was changed in another tab or device.</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
@@ -914,9 +1013,20 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
         </p>
       )}
 
-      {loadError ? (
+      {missing ? (
         <div className="py-16 text-center">
-          <p className="font-serif text-lg">Couldn't load your notes</p>
+          <p className="font-serif text-lg">This note was deleted</p>
+          <button
+            type="button"
+            onClick={onDeleted}
+            className="mt-4 h-10 px-5 border border-foreground hover:bg-accent text-sm font-medium"
+          >
+            Back to notes
+          </button>
+        </div>
+      ) : loadError ? (
+        <div className="py-16 text-center">
+          <p className="font-serif text-lg">Couldn't load this note</p>
           <button
             type="button"
             onClick={() => {
@@ -929,9 +1039,24 @@ export function NotesEditor({ ref, onOpenPage, toolbarExtra, toolbarClassName }:
           </button>
         </div>
       ) : !blocks ? (
-        <p className="py-16 text-center text-sm text-muted-foreground">Loading notes…</p>
+        <p className="py-16 text-center text-sm text-muted-foreground">Loading note…</p>
       ) : (
-        <div className="notes-body pt-4 pb-[40vh]" onClick={handleClick}>
+        <div className="notes-body pt-5 pb-[40vh]" onClick={handleClick}>
+          <textarea
+            value={title}
+            onChange={(e) => {
+              const value = e.target.value.replace(/\n/g, " ")
+              titleRef.current = value
+              setTitle(value)
+              scheduleSave()
+            }}
+            onKeyDown={handleTitleKeyDown}
+            placeholder="Untitled"
+            aria-label="Note title"
+            rows={1}
+            maxLength={200}
+            className="w-full resize-none overflow-hidden bg-transparent font-serif text-[2rem] font-bold leading-tight tracking-tight placeholder:text-muted-foreground/50 focus:outline-none mb-3 [field-sizing:content]"
+          />
           {blocks.map((b, i) => (
             <BlockRow
               key={b.id}

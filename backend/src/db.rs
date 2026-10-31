@@ -122,23 +122,23 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // The notes page: one document. `version` goes up on every save so two
-    // open tabs can't silently overwrite each other.
+    migrate_single_notes_page(pool).await?;
+    // Notes. `version` goes up on every save so two open tabs can't silently
+    // overwrite each other.
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS notes (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT '',
             content TEXT NOT NULL DEFAULT '',
-            version INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         "#,
     )
     .execute(pool)
     .await?;
-    sqlx::query("INSERT OR IGNORE INTO notes (id) VALUES (1)")
-        .execute(pool)
-        .await?;
 
     // Starter collections, created once so deleted ones don't come back
     let seeded: Option<String> =
@@ -669,47 +669,149 @@ pub async fn set_book_categories(
 // Notes
 // ---------------------------------------------------------------------------
 
-pub const MAX_NOTES_BYTES: usize = 1024 * 1024;
+pub const MAX_NOTE_BYTES: usize = 1024 * 1024;
+pub const MAX_NOTE_TITLE_CHARS: usize = 200;
+/// Characters of content sent with each note in the list (for the card preview)
+const EXCERPT_CHARS: i64 = 400;
 
 #[derive(Serialize, sqlx::FromRow, Clone, Debug, PartialEq)]
-pub struct Notes {
+pub struct Note {
+    pub id: i64,
+    pub title: String,
     pub content: String,
     pub version: i64,
     pub updated_at: Option<String>,
 }
 
+#[derive(Serialize, sqlx::FromRow, Clone, Debug, PartialEq)]
+pub struct NoteSummary {
+    pub id: i64,
+    pub title: String,
+    /// The start of the content (Markdown)
+    pub excerpt: String,
+    pub updated_at: Option<String>,
+}
+
 #[derive(Deserialize)]
-pub struct SaveNotesPayload {
+pub struct CreateNotePayload {
+    #[serde(default)]
+    pub title: String,
+}
+
+#[derive(Deserialize)]
+pub struct SaveNotePayload {
+    pub title: String,
     pub content: String,
     /// The version the client started editing from.
     pub base_version: i64,
 }
 
-pub async fn get_notes(pool: &SqlitePool) -> Result<Notes, sqlx::Error> {
-    sqlx::query_as::<_, Notes>("SELECT content, version, updated_at FROM notes WHERE id = 1")
-        .fetch_one(pool)
-        .await
+/// Before multiple notes, there was one notes page (`notes` with a single
+/// row, id = 1). Moves its content into the new table as a note called "Notes".
+async fn migrate_single_notes_page(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let schema: Option<String> =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notes'")
+            .fetch_optional(pool)
+            .await?;
+    if !schema.is_some_and(|sql| sql.contains("CHECK (id = 1)")) {
+        return Ok(());
+    }
+    let mut tx = pool.begin().await?;
+    sqlx::query("ALTER TABLE notes RENAME TO notes_single_page")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        r#"
+        CREATE TABLE notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT '',
+            content TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO notes (title, content, created_at, updated_at)
+        SELECT 'Notes', content, updated_at, updated_at
+        FROM notes_single_page WHERE trim(content) <> ''
+        "#,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DROP TABLE notes_single_page")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
+}
+
+/// Most recently edited first.
+pub async fn list_notes(pool: &SqlitePool) -> Result<Vec<NoteSummary>, sqlx::Error> {
+    sqlx::query_as::<_, NoteSummary>(
+        r#"
+        SELECT id, title, substr(content, 1, ?) AS excerpt, updated_at
+        FROM notes
+        ORDER BY updated_at DESC, id DESC
+        "#,
+    )
+    .bind(EXCERPT_CHARS)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_note(pool: &SqlitePool, id: i64) -> Result<Option<Note>, sqlx::Error> {
+    sqlx::query_as::<_, Note>(
+        "SELECT id, title, content, version, updated_at FROM notes WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn create_note(pool: &SqlitePool, title: &str) -> Result<Note, sqlx::Error> {
+    sqlx::query_as::<_, Note>(
+        "INSERT INTO notes (title) VALUES (?) RETURNING id, title, content, version, updated_at",
+    )
+    .bind(title)
+    .fetch_one(pool)
+    .await
 }
 
 /// Saves only if nobody else saved since `base_version`; `Ok(None)` means
-/// someone did (conflict).
-pub async fn save_notes(
+/// someone did (conflict) or the note is gone.
+pub async fn save_note(
     pool: &SqlitePool,
+    id: i64,
+    title: &str,
     content: &str,
     base_version: i64,
-) -> Result<Option<Notes>, sqlx::Error> {
-    sqlx::query_as::<_, Notes>(
+) -> Result<Option<Note>, sqlx::Error> {
+    sqlx::query_as::<_, Note>(
         r#"
         UPDATE notes
-        SET content = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = 1 AND version = ?
-        RETURNING content, version, updated_at
+        SET title = ?, content = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND version = ?
+        RETURNING id, title, content, version, updated_at
         "#,
     )
+    .bind(title)
     .bind(content)
+    .bind(id)
     .bind(base_version)
     .fetch_optional(pool)
     .await
+}
+
+pub async fn delete_note(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM notes WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
 }
 
 #[cfg(test)]
@@ -954,20 +1056,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_notes_versioning() {
+    async fn test_notes() {
         let pool = test_pool().await;
-        let empty = get_notes(&pool).await.unwrap();
-        assert_eq!((empty.content.as_str(), empty.version), ("", 0));
+        assert!(list_notes(&pool).await.unwrap().is_empty());
 
-        let saved = save_notes(&pool, "# Ideas", 0).await.unwrap().unwrap();
-        assert_eq!(saved.version, 1);
-        // A second tab still on version 0 must not overwrite it
-        assert!(save_notes(&pool, "stale", 0).await.unwrap().is_none());
-        assert_eq!(get_notes(&pool).await.unwrap().content, "# Ideas");
+        let note = create_note(&pool, "Atomic Habits").await.unwrap();
+        assert_eq!((note.title.as_str(), note.version), ("Atomic Habits", 1));
+        let saved = save_note(&pool, note.id, "Atomic Habits", "# Ideas", 1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.version, 2);
+        // A second tab still on version 1 must not overwrite it
+        assert!(
+            save_note(&pool, note.id, "x", "stale", 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            get_note(&pool, note.id).await.unwrap().unwrap().content,
+            "# Ideas"
+        );
+
+        let other = create_note(&pool, "").await.unwrap();
+        let list = list_notes(&pool).await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, other.id, "newest first");
+        assert_eq!(list[1].excerpt, "# Ideas");
+
+        assert!(delete_note(&pool, note.id).await.unwrap());
+        assert!(get_note(&pool, note.id).await.unwrap().is_none());
+        assert!(!delete_note(&pool, note.id).await.unwrap());
 
         // Running the migration again keeps the notes
         migrate(&pool).await.unwrap();
-        assert_eq!(get_notes(&pool).await.unwrap().version, 1);
+        assert_eq!(list_notes(&pool).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_single_notes_page_becomes_a_note() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE notes (id INTEGER PRIMARY KEY CHECK (id = 1), content TEXT NOT NULL \
+             DEFAULT '', version INTEGER NOT NULL DEFAULT 0, updated_at DATETIME DEFAULT \
+             CURRENT_TIMESTAMP)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO notes (id, content, version) VALUES (1, '# Old notes', 7)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        migrate(&pool).await.unwrap();
+        let list = list_notes(&pool).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            (list[0].title.as_str(), list[0].excerpt.as_str()),
+            ("Notes", "# Old notes")
+        );
+        // New notes can be added next to it
+        create_note(&pool, "Second").await.unwrap();
+        assert_eq!(list_notes(&pool).await.unwrap().len(), 2);
     }
 
     #[tokio::test]

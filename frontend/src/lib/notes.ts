@@ -1,3 +1,5 @@
+import { apiFetch, readError } from "@/lib/api"
+
 /**
  * The notes page is stored as plain Markdown, one block per line:
  *
@@ -278,4 +280,80 @@ function nodeToInline(node: Node): string {
 /** "Atomic Habits, p. 17" link in Markdown. */
 export function pageLinkMarkdown(title: string, link: PageLink): string {
   return `[${escapeInline(`${title}, p. ${link.page}`)}](${pageLinkHref(link)})`
+}
+
+// ---------------------------------------------------------------------------
+// The list of notes
+// ---------------------------------------------------------------------------
+
+export interface NoteSummary {
+  id: number
+  title: string
+  /** Start of the content, as Markdown */
+  excerpt: string
+  updated_at: string | null
+}
+
+/** Card preview: the excerpt as one line of plain text. */
+export function plainExcerpt(markdown: string): string {
+  return markdown
+    .split("\n")
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^(#{1,3} |[-*] \[[ xX]\] |[-*] |\d+\. |> ?|---$)/, "")
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/\\(.)/g, "$1")
+        .replace(/[*`]/g, "")
+    )
+    .filter(Boolean)
+    .join(" · ")
+}
+
+/** "14:05" today, "Oct 30" this year, else "Oct 30, 2025". */
+export function formatNoteDate(sqliteUtc: string | null): string {
+  if (!sqliteUtc) return ""
+  const date = new Date(`${sqliteUtc.replace(" ", "T")}Z`)
+  if (Number.isNaN(date.getTime())) return ""
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+  }
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  })
+}
+
+/** Creates a note and returns its id. */
+export async function createNote(title = ""): Promise<number> {
+  const res = await apiFetch("/api/notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  })
+  if (!res.ok) throw new Error(await readError(res, `Couldn't create a note (${res.status})`))
+  return (await res.json()).id
+}
+
+const LAST_NOTE_KEY = "openshelf_last_note"
+
+/** The note opened most recently on this device (quotes go there by default). */
+export function readLastNoteId(): number | null {
+  try {
+    const id = Number(localStorage.getItem(LAST_NOTE_KEY))
+    return Number.isInteger(id) && id > 0 ? id : null
+  } catch {
+    return null
+  }
+}
+
+export function storeLastNoteId(id: number | null) {
+  try {
+    if (id == null) localStorage.removeItem(LAST_NOTE_KEY)
+    else localStorage.setItem(LAST_NOTE_KEY, String(id))
+  } catch {
+    // ignore
+  }
 }

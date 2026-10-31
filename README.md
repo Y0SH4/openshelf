@@ -12,7 +12,7 @@ Point OpenShelf at the folders where you keep your books. It scans them (includi
 - **Covers.** EPUB covers come from the book itself and PDF covers are rendered from the first page. Books without either get a clean generated cover.
 - **PDF reader.** Pages load lazily, so even large books open fast. It has zoom and fit-to-width, white, sepia and black page colors, and keyboard navigation (← → + − Esc).
 - **Reading progress** is saved automatically, per book.
-- **Notes.** One Notion-style page for everything you read, with headings, lists, to-dos and quotes. Select text in a PDF to quote it, or insert a link to the current page; clicking a page link opens the book at that page. Notes are stored as Markdown.
+- **Notes.** Notion-style notes shown as cards, with headings, lists, to-dos and quotes. Open them from the Library or next to the book you're reading. Select text in a PDF to quote it into a note, or insert a link to the current page; clicking a page link opens the book at that page. Notes are stored as Markdown.
 - **Collections, search, filters and sorting.** Grid or list view.
 - **One private account**, protected by a setup code on first run and rate-limited sign-in.
 - EPUB books can be downloaded. In-browser EPUB reading is planned.

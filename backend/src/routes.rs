@@ -16,8 +16,9 @@ use tokio_util::io::ReaderStream;
 
 use crate::config::Config;
 use crate::db::{
-    self, Category, CreateCategoryPayload, MAX_CATEGORY_NAME_CHARS, MAX_NOTES_BYTES, Notes,
-    ReadingProgress, SaveNotesPayload, SaveProgressPayload, SetBookCategoriesPayload,
+    self, Category, CreateCategoryPayload, CreateNotePayload, MAX_CATEGORY_NAME_CHARS,
+    MAX_NOTE_BYTES, MAX_NOTE_TITLE_CHARS, Note, NoteSummary, ReadingProgress, SaveNotePayload,
+    SaveProgressPayload, SetBookCategoriesPayload,
 };
 use crate::scanner::{self, BookFormat, BookItem, Library};
 use crate::security::LoginLimiter;
@@ -372,33 +373,84 @@ pub async fn save_book_progress(
     Ok(Json(progress))
 }
 
+fn note_title(title: &str) -> Result<String, ApiError> {
+    let title = title.trim();
+    if title.chars().count() > MAX_NOTE_TITLE_CHARS {
+        return Err(ApiError::bad_request(format!(
+            "Note titles can be at most {MAX_NOTE_TITLE_CHARS} characters"
+        )));
+    }
+    Ok(title.to_string())
+}
+
+async fn load_note(pool: &SqlitePool, id: i64) -> Result<Note, ApiError> {
+    db::get_note(pool, id)
+        .await
+        .map_err(|e| ApiError::internal("Failed to load note", e))?
+        .ok_or_else(|| ApiError::not_found("Note not found"))
+}
+
 // GET /api/notes
-pub async fn get_notes(State(pool): State<SqlitePool>) -> Result<Json<Notes>, ApiError> {
-    db::get_notes(&pool)
+pub async fn list_notes(
+    State(pool): State<SqlitePool>,
+) -> Result<Json<Vec<NoteSummary>>, ApiError> {
+    db::list_notes(&pool)
         .await
         .map(Json)
         .map_err(|e| ApiError::internal("Failed to load notes", e))
 }
 
-// PUT /api/notes
-/// 409 with the current notes when they were saved elsewhere since
-/// `base_version`, so the client can show what changed.
-pub async fn save_notes(
+// POST /api/notes
+pub async fn create_note(
     State(pool): State<SqlitePool>,
-    Json(payload): Json<SaveNotesPayload>,
+    Json(payload): Json<CreateNotePayload>,
+) -> Result<(StatusCode, Json<Note>), ApiError> {
+    let title = note_title(&payload.title)?;
+    db::create_note(&pool, &title)
+        .await
+        .map(|note| (StatusCode::CREATED, Json(note)))
+        .map_err(|e| ApiError::internal("Failed to create note", e))
+}
+
+// GET /api/notes/{id}
+pub async fn get_note(
+    State(pool): State<SqlitePool>,
+    Path(id): Path<i64>,
+) -> Result<Json<Note>, ApiError> {
+    load_note(&pool, id).await.map(Json)
+}
+
+// PUT /api/notes/{id}
+/// 409 with the current note when it was saved elsewhere since
+/// `base_version`, so the client can show what changed.
+pub async fn save_note(
+    State(pool): State<SqlitePool>,
+    Path(id): Path<i64>,
+    Json(payload): Json<SaveNotePayload>,
 ) -> Result<Response, ApiError> {
-    if payload.content.len() > MAX_NOTES_BYTES {
-        return Err(ApiError::bad_request("Notes are too long (max 1 MB)"));
+    let title = note_title(&payload.title)?;
+    if payload.content.len() > MAX_NOTE_BYTES {
+        return Err(ApiError::bad_request("This note is too long (max 1 MB)"));
     }
-    match db::save_notes(&pool, &payload.content, payload.base_version).await {
+    match db::save_note(&pool, id, &title, &payload.content, payload.base_version).await {
         Ok(Some(saved)) => Ok(Json(saved).into_response()),
         Ok(None) => {
-            let current = db::get_notes(&pool)
-                .await
-                .map_err(|e| ApiError::internal("Failed to load notes", e))?;
+            let current = load_note(&pool, id).await?;
             Ok((StatusCode::CONFLICT, Json(current)).into_response())
         }
-        Err(e) => Err(ApiError::internal("Failed to save notes", e)),
+        Err(e) => Err(ApiError::internal("Failed to save note", e)),
+    }
+}
+
+// DELETE /api/notes/{id}
+pub async fn delete_note(
+    State(pool): State<SqlitePool>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    match db::delete_note(&pool, id).await {
+        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(false) => Err(ApiError::not_found("Note not found")),
+        Err(e) => Err(ApiError::internal("Failed to delete note", e)),
     }
 }
 

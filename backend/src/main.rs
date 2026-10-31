@@ -181,7 +181,16 @@ async fn main() {
             get(routes::get_categories).post(routes::create_category),
         )
         .route("/api/categories/{id}", delete(routes::delete_category))
-        .route("/api/notes", get(routes::get_notes).put(routes::save_notes))
+        .route(
+            "/api/notes",
+            get(routes::list_notes).post(routes::create_note),
+        )
+        .route(
+            "/api/notes/{id}",
+            get(routes::get_note)
+                .put(routes::save_note)
+                .delete(routes::delete_note),
+        )
         .route("/api/{*rest}", any(frontend::api_not_found));
 
     let app = match frontend::routes(&config.frontend_dir) {
