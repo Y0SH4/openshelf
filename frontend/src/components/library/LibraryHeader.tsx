@@ -63,8 +63,9 @@ export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
         {/* Toolbar (sibling of <header> so it stays sticky for the whole page) */}
         <div className="sticky top-0 z-30 bg-background border-b border-foreground">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-3">
-            <span className="font-serif text-lg font-bold tracking-tight shrink-0">
-              OpenShelf
+            <span className="flex items-center gap-2 font-serif text-lg font-bold tracking-tight shrink-0">
+              <img src="/logo-mark.png" alt="" width={32} height={32} className="w-8 h-8" />
+              <span className="hidden sm:inline">OpenShelf</span>
             </span>
 
             <label className="relative flex-1 max-w-md ml-auto">

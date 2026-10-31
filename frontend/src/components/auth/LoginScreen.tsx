@@ -66,6 +66,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ mode, onSuccess }) => 
     <div className="min-h-[100dvh] bg-background text-foreground flex flex-col">
       <main className="flex-1 flex items-center justify-center px-5 py-12">
         <div className="w-full max-w-sm">
+          <img
+            src="/logo.png"
+            alt=""
+            width={280}
+            height={244}
+            className="block mx-auto w-[220px] h-auto mb-5"
+          />
           <p className="font-serif text-3xl font-bold tracking-tight text-center">OpenShelf</p>
           <p className="text-center text-xs uppercase tracking-[0.2em] text-muted-foreground mt-1">
             Your home library
