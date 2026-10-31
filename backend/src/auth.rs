@@ -81,6 +81,14 @@ pub fn new_setup_code() -> String {
     format!("{}-{}", &chars[..4], &chars[4..])
 }
 
+/// A setup code chosen with `OPENSHELF_SETUP_CODE` needs at least this many
+/// letters/digits, so it can't be guessed within the attempt limit.
+pub const MIN_SETUP_CODE_CHARS: usize = 8;
+
+pub fn is_strong_setup_code(code: &str) -> bool {
+    normalize_setup_code(code).len() >= MIN_SETUP_CODE_CHARS
+}
+
 /// "k7qm 2xrd" and "K7QM-2XRD" are treated as equal.
 fn normalize_setup_code(code: &str) -> String {
     code.chars()
@@ -252,7 +260,9 @@ pub async fn setup(
         eprintln!("⚠️  Wrong setup code from {ip}");
         return Err(ApiError(
             StatusCode::UNAUTHORIZED,
-            "Wrong setup code. It's printed in the server log when OpenShelf starts.".into(),
+            "Wrong setup code. Copy the newest one from the server log (a new code is made \
+             every time OpenShelf restarts), or use the one set in OPENSHELF_SETUP_CODE."
+                .into(),
         ));
     }
 
@@ -429,6 +439,9 @@ mod tests {
         assert_ne!(code, new_setup_code());
         assert_eq!(normalize_setup_code("k7qm 2xrd"), "K7QM2XRD");
         assert_eq!(normalize_setup_code("K7QM-2XRD"), "K7QM2XRD");
+        assert!(is_strong_setup_code(&code));
+        assert!(is_strong_setup_code("my-books-2026"));
+        assert!(!is_strong_setup_code("1234-567"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 services:
   openshelf:
     build: .
+    container_name: openshelf
     # Or use a released image instead of building (amd64 + arm64):
     # image: ghcr.io/y0sh4/openshelf:latest
     ports:
@@ -12,6 +13,9 @@ services:
       # More folders: mount them inside /books, e.g. ~/Comics:/books/comics:ro
       - ${BOOKS_PATH:-./books}:/books:ro
     # environment:
+    #   # Your own code for creating the first account (at least 8 letters or
+    #   # digits). Without it, a random code is printed in `docker logs openshelf`.
+    #   OPENSHELF_SETUP_CODE: "choose-a-code"
     #   # Behind an HTTPS reverse proxy (Caddy, Nginx, Traefik):
     #   OPENSHELF_SECURE_COOKIE: "true"
     #   OPENSHELF_TRUST_PROXY: "true"

@@ -23,10 +23,16 @@ Point OpenShelf at the folders where you keep your books. It scans them (includi
 git clone https://github.com/Y0SH4/openshelf.git
 cd openshelf
 BOOKS_PATH=/path/to/your/books docker compose up -d --build
-docker compose logs openshelf     # shows the setup code
+docker logs openshelf     # shows the setup code
 ```
 
 Open `http://<your-server>:3000`, enter the **setup code** from the log, and create your account. The folder you mounted is already in your library.
+
+The setup code makes sure only someone with access to the server can create the account. It's only needed once, for the first account. A few tips:
+
+- **Portainer, Synology, Unraid, CasaOS…** open the OpenShelf container's **Logs** to see the code.
+- A new code is made **every time OpenShelf restarts**. If the code is refused, check the log again and use the newest one.
+- Prefer not to read logs? Set your own code with `OPENSHELF_SETUP_CODE` (at least 8 letters or digits) in `docker-compose.yml` before the first start.
 
 To use more folders, mount them inside `/books` in `docker-compose.yml`, then add them in **Settings → Library folders**:
 
@@ -72,6 +78,7 @@ Everything is optional and set with environment variables.
 | `BOOKS_DIR` | | Added as the first library folder if there is none yet |
 | `OPENSHELF_SECURE_COOKIE` | `false` | Set to `true` when OpenShelf is served over HTTPS |
 | `OPENSHELF_TRUST_PROXY` | `false` | Set to `true` behind a reverse proxy, so sign-in limits use the real client IP from `X-Forwarded-For` |
+| `OPENSHELF_SETUP_CODE` | random | Code for creating the first account, at least 8 letters or digits. Without it, a random code is printed in the log on every start |
 | `OPENSHELF_FRONTEND_DIR` | `frontend/dist` | Built frontend to serve |
 | `OPENSHELF_CORS_ORIGIN` | | Only needed if the frontend is hosted on a different origin |
 
@@ -100,6 +107,7 @@ docker compose down
 docker run --rm -v openshelf_openshelf-data:/data alpine \
   sh -c "apk add -q sqlite && sqlite3 /data/openshelf.db 'DELETE FROM sessions; DELETE FROM users;'"
 docker compose up -d
+docker logs openshelf     # the new setup code
 ```
 
 ## Development

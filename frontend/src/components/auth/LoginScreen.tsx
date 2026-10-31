@@ -100,8 +100,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ mode, onSuccess }) => 
                     className={`${field} font-mono tracking-widest`}
                   />
                   <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-                    Printed in the server log when OpenShelf starts
-                    (with Docker: <code className="font-mono">docker compose logs openshelf</code>).
+                    Shown in the server log when OpenShelf starts. With Docker, run{" "}
+                    <code className="font-mono">docker logs openshelf</code>, or open the
+                    container's <strong>Logs</strong> in Portainer or your NAS app. A new code is
+                    made every time OpenShelf restarts, so use the newest one.
                   </p>
                 </div>
               )}

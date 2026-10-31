@@ -112,11 +112,31 @@ async fn main() {
 
     let setup_code = match db::count_users(&pool).await {
         Ok(0) => {
-            let code = auth::new_setup_code();
+            let custom = config.setup_code.clone().filter(|code| {
+                let strong = auth::is_strong_setup_code(code);
+                if !strong {
+                    println!(
+                        "⚠️  OPENSHELF_SETUP_CODE is too short (needs at least {} letters or \
+                         digits). Using a random setup code instead.",
+                        auth::MIN_SETUP_CODE_CHARS
+                    );
+                }
+                strong
+            });
             println!();
             println!("🔑 No account yet. Open OpenShelf in your browser and create one");
-            println!("   with this setup code:  {code}");
-            println!("   (a new code is generated every time the server starts)");
+            let code = match custom {
+                Some(code) => {
+                    println!("   with the setup code you set in OPENSHELF_SETUP_CODE.");
+                    code
+                }
+                None => {
+                    let code = auth::new_setup_code();
+                    println!("   with this setup code:  {code}");
+                    println!("   (a new code is generated every time the server starts)");
+                    code
+                }
+            };
             println!();
             Some(code)
         }
