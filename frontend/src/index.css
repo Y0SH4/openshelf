@@ -182,6 +182,77 @@
   }
 }
 
+@layer components {
+  /* Notes editor */
+  .note-text:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+  .note-text[data-hint="focus"]:not(:focus):empty::before {
+    content: none;
+  }
+  .note-text code {
+    @apply font-mono text-[0.9em] bg-muted px-1;
+  }
+  .note-link {
+    @apply underline underline-offset-2 cursor-pointer;
+  }
+  /* Page link: "Atomic Habits, p. 17" */
+  .note-chip {
+    @apply not-italic font-sans text-[0.85em] font-medium border border-foreground px-1.5 mx-0.5 whitespace-nowrap cursor-pointer select-none hover:bg-accent;
+  }
+
+  /* PDF.js text layer: invisible text over the page canvas so it can be selected */
+  .textLayer {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    line-height: 1;
+    text-align: initial;
+    text-size-adjust: none;
+    -webkit-text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    user-select: text;
+    -webkit-user-select: text;
+    z-index: 0;
+  }
+  .textLayer :is(span, br) {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+  }
+  .textLayer > :not(.markedContent),
+  .textLayer .markedContent span:not(.markedContent) {
+    z-index: 1;
+  }
+  .textLayer span.markedContent {
+    top: 0;
+    height: 0;
+  }
+  .textLayer ::selection {
+    background: hsl(var(--foreground) / 0.28);
+    color: transparent;
+  }
+  .textLayer br::selection {
+    background: transparent;
+  }
+  .textLayer .endOfContent {
+    display: block;
+    position: absolute;
+    inset: 100% 0 0;
+    z-index: 0;
+    cursor: default;
+    user-select: none;
+  }
+  .textLayer.selecting .endOfContent {
+    top: 0;
+  }
+}
+
 @layer utilities {
   .scrollbar-none {
     scrollbar-width: none;

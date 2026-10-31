@@ -14,6 +14,8 @@ import { AssignCategoryModal } from "@/components/library/AssignCategoryModal"
 import { ReaderView } from "@/components/reader/ReaderView"
 import { LoginScreen } from "@/components/auth/LoginScreen"
 import { SettingsView } from "@/components/settings/SettingsView"
+import { NotesView } from "@/components/notes/NotesView"
+import type { PageLink } from "@/lib/notes"
 import { apiFetch, UNAUTHORIZED_EVENT, type AuthStatus } from "@/lib/api"
 
 // localStorage can throw (private mode, blocked storage) — never let that break the app.
@@ -48,11 +50,13 @@ type AuthState =
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState>({ status: "checking" })
-  const [view, setView] = useState<"library" | "settings">("library")
+  const [view, setView] = useState<"library" | "settings" | "notes">("library")
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
+  /** Page to open the selected book at (from a link in the notes) */
+  const [startPage, setStartPage] = useState<number | null>(null)
   const [managingBook, setManagingBook] = useState<Book | null>(null)
   const [search, setSearch] = useState("")
   const [formatFilter, setFormatFilter] = useState<FormatFilter>("all")
@@ -160,6 +164,24 @@ export default function App() {
   }, [])
 
   const openSettings = useCallback(() => setView("settings"), [])
+  const openNotes = useCallback(() => setView("notes"), [])
+  const closeNotes = useCallback(() => setView("library"), [])
+
+  const openBook = useCallback((book: Book) => {
+    setStartPage(null)
+    setSelectedBook(book)
+  }, [])
+
+  const openPage = useCallback(
+    ({ bookId, page }: PageLink) => {
+      const book = books.find((b) => b.id === bookId)
+      if (!book) return false
+      setStartPage(page)
+      setSelectedBook(book)
+      return true
+    },
+    [books]
+  )
   const closeSettings = useCallback(() => {
     setView("library")
     // Folders may have changed → reload the shelf
@@ -290,12 +312,18 @@ export default function App() {
       <ReaderView
         key={selectedBook.id}
         book={selectedBook}
+        startPage={startPage}
+        onOpenPage={openPage}
         onClose={() => setSelectedBook(null)}
         theme={theme}
         onThemeChange={setTheme}
         onProgressSaved={handleProgressSaved}
       />
     )
+  }
+
+  if (view === "notes") {
+    return <NotesView onBack={closeNotes} onOpenPage={openPage} />
   }
 
   return (
@@ -316,6 +344,7 @@ export default function App() {
         username={auth.username}
         onLogout={handleLogout}
         onOpenSettings={openSettings}
+        onOpenNotes={openNotes}
       />
 
       <CategoryFilterBar
@@ -385,7 +414,7 @@ export default function App() {
                 key={book.id}
                 book={book}
                 variant="list"
-                onSelect={setSelectedBook}
+                onSelect={openBook}
                 onManageCategories={setManagingBook}
               />
             ))}
@@ -397,7 +426,7 @@ export default function App() {
                 key={book.id}
                 book={book}
                 variant="grid"
-                onSelect={setSelectedBook}
+                onSelect={openBook}
                 onManageCategories={setManagingBook}
               />
             ))}

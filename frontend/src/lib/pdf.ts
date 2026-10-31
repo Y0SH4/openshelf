@@ -12,6 +12,7 @@ export interface PDFPageProxy {
     width: number
     height: number
   }
+  streamTextContent: () => ReadableStream
   render: (params: {
     canvasContext: CanvasRenderingContext2D
     viewport: { width: number; height: number }

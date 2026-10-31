@@ -12,6 +12,7 @@ Point OpenShelf at the folders where you keep your books. It scans them (includi
 - **Covers.** EPUB covers come from the book itself and PDF covers are rendered from the first page. Books without either get a clean generated cover.
 - **PDF reader.** Pages load lazily, so even large books open fast. It has zoom and fit-to-width, white, sepia and black page colors, and keyboard navigation (← → + − Esc).
 - **Reading progress** is saved automatically, per book.
+- **Notes.** One Notion-style page for everything you read, with headings, lists, to-dos and quotes. Select text in a PDF to quote it, or insert a link to the current page; clicking a page link opens the book at that page. Notes are stored as Markdown.
 - **Collections, search, filters and sorting.** Grid or list view.
 - **One private account**, protected by a setup code on first run and rate-limited sign-in.
 - EPUB books can be downloaded. In-browser EPUB reading is planned.
@@ -88,7 +89,7 @@ Then set `OPENSHELF_SECURE_COOKIE=true` and `OPENSHELF_TRUST_PROXY=true`.
 
 ## Forgot your password?
 
-Delete the account, then restart OpenShelf. It prints a new setup code so you can create the account again. Your books, folders, reading progress and collections are kept.
+Delete the account, then restart OpenShelf. It prints a new setup code so you can create the account again. Your books, folders, reading progress, collections and notes are kept.
 
 ```bash
 # From source (stop the server first)
@@ -118,11 +119,11 @@ backend/src/
   auth.rs       account, sessions, setup code
   scanner.rs    folder scanning, book IDs, covers
   folders.rs    library folders and the folder picker
-  routes.rs     books, progress, collections
+  routes.rs     books, progress, collections, notes
   db.rs         SQLite schema and queries
   security.rs   sign-in rate limiting
   frontend.rs   serves the built frontend
 frontend/src/
-  components/   library, reader, settings, auth
+  components/   library, reader, notes, settings, auth
   lib/          API helper, PDF.js loader
 ```

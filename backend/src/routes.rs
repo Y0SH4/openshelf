@@ -16,8 +16,8 @@ use tokio_util::io::ReaderStream;
 
 use crate::config::Config;
 use crate::db::{
-    self, Category, CreateCategoryPayload, MAX_CATEGORY_NAME_CHARS, ReadingProgress,
-    SaveProgressPayload, SetBookCategoriesPayload,
+    self, Category, CreateCategoryPayload, MAX_CATEGORY_NAME_CHARS, MAX_NOTES_BYTES, Notes,
+    ReadingProgress, SaveNotesPayload, SaveProgressPayload, SetBookCategoriesPayload,
 };
 use crate::scanner::{self, BookFormat, BookItem, Library};
 use crate::security::LoginLimiter;
@@ -370,6 +370,36 @@ pub async fn save_book_progress(
         .ok_or_else(|| ApiError::internal("Failed to read saved progress", "no row"))?;
 
     Ok(Json(progress))
+}
+
+// GET /api/notes
+pub async fn get_notes(State(pool): State<SqlitePool>) -> Result<Json<Notes>, ApiError> {
+    db::get_notes(&pool)
+        .await
+        .map(Json)
+        .map_err(|e| ApiError::internal("Failed to load notes", e))
+}
+
+// PUT /api/notes
+/// 409 with the current notes when they were saved elsewhere since
+/// `base_version`, so the client can show what changed.
+pub async fn save_notes(
+    State(pool): State<SqlitePool>,
+    Json(payload): Json<SaveNotesPayload>,
+) -> Result<Response, ApiError> {
+    if payload.content.len() > MAX_NOTES_BYTES {
+        return Err(ApiError::bad_request("Notes are too long (max 1 MB)"));
+    }
+    match db::save_notes(&pool, &payload.content, payload.base_version).await {
+        Ok(Some(saved)) => Ok(Json(saved).into_response()),
+        Ok(None) => {
+            let current = db::get_notes(&pool)
+                .await
+                .map_err(|e| ApiError::internal("Failed to load notes", e))?;
+            Ok((StatusCode::CONFLICT, Json(current)).into_response())
+        }
+        Err(e) => Err(ApiError::internal("Failed to save notes", e)),
+    }
 }
 
 // GET /api/categories

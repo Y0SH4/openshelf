@@ -1,5 +1,5 @@
 import React from "react"
-import { LayoutGrid, List, LogOut, Search, Settings, X } from "lucide-react"
+import { LayoutGrid, List, LogOut, NotebookPen, Search, Settings, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { DisplayMenu } from "@/components/reading/DisplayMenu"
 
@@ -24,6 +24,7 @@ interface LibraryHeaderProps {
   username?: string
   onLogout?: () => void
   onOpenSettings?: () => void
+  onOpenNotes?: () => void
 }
 
 const FORMAT_TABS: { id: FormatFilter; label: string }[] = [
@@ -55,6 +56,7 @@ export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
     username,
     onLogout,
     onOpenSettings,
+    onOpenNotes,
   }) => {
     return (
       <>
@@ -87,6 +89,17 @@ export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
               )}
             </label>
 
+            {onOpenNotes && (
+              <button
+                type="button"
+                onClick={onOpenNotes}
+                className="h-10 w-10 flex items-center justify-center hover:bg-accent shrink-0"
+                title="Notes"
+                aria-label="Notes"
+              >
+                <NotebookPen className="w-5 h-5" />
+              </button>
+            )}
             {onOpenSettings && (
               <button
                 type="button"

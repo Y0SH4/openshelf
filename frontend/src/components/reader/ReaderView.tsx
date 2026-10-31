@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import { apiFetch } from "@/lib/api"
-import { ArrowLeft, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react"
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Minus,
+  NotebookPen,
+  Plus,
+  TextQuote,
+  X,
+} from "lucide-react"
 import { PdfPage } from "@/components/reader/PdfPage"
 import { DisplayMenu } from "@/components/reading/DisplayMenu"
+import { NotesEditor, type NotesEditorHandle } from "@/components/notes/NotesEditor"
+import type { PageLink } from "@/lib/notes"
 import { loadPdfDocument, type PDFDocumentProxy } from "@/lib/pdf"
 import { cn } from "@/lib/utils"
 import type { Book } from "@/components/library/BookCard"
@@ -10,6 +21,10 @@ import type { ThemeMode } from "@/components/library/LibraryHeader"
 
 interface ReaderViewProps {
   book: Book
+  /** Open at this page instead of the saved one (link from the notes) */
+  startPage?: number | null
+  /** Opens a page link from the notes that points to another book */
+  onOpenPage: (link: PageLink) => boolean
   onClose: () => void
   theme: ThemeMode
   onThemeChange: (theme: ThemeMode) => void
@@ -22,6 +37,13 @@ interface ReaderViewProps {
 }
 
 type SaveStatus = "saved" | "saving" | "unsaved"
+
+interface Selection {
+  text: string
+  page: number
+  x: number
+  y: number
+}
 
 const MIN_SCALE = 0.6
 const MAX_SCALE = 2.5
@@ -54,12 +76,15 @@ function storeScale(s: number) {
  * - Toolbars: back to Library, Aa (page color + zoom), page scrubber, go to page.
  * - Progress auto-saves 1.2s after you stop on a page, and is flushed when
  *   the reader closes or the tab is hidden (fetch keepalive, JSON).
+ * - Notes panel on the right; selected PDF text can be quoted into it.
  * - Keys: ← / → page, + / − zoom, Esc back to Library.
  */
 export const ReaderView: React.FC<ReaderViewProps> = React.memo(
-  ({ book, onClose, theme, onThemeChange, onProgressSaved }) => {
+  ({ book, startPage, onOpenPage, onClose, theme, onThemeChange, onProgressSaved }) => {
     const isPdf = book.format === "pdf"
-    const initialPageRef = useRef<number>(Math.max(1, book.progress?.current_page || 1))
+    const initialPageRef = useRef<number>(
+      Math.max(1, startPage || book.progress?.current_page || 1)
+    )
 
     const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
     const [baseSize, setBaseSize] = useState<{ width: number; height: number } | null>(null)
@@ -73,6 +98,10 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     const [scrubPage, setScrubPage] = useState<number | null>(null)
     const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
     const [chromeVisible, setChromeVisible] = useState(true)
+    const [notesOpen, setNotesOpen] = useState(false)
+    const [selection, setSelection] = useState<Selection | null>(null)
+    const notesRef = useRef<NotesEditorHandle | null>(null)
+    const pendingNotesAction = useRef<((notes: NotesEditorHandle) => void) | null>(null)
 
     const scrollRef = useRef<HTMLDivElement>(null)
     const debounceRef = useRef<number | null>(null)
@@ -260,6 +289,66 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       })
     }, [scale])
 
+    // ---------- Notes ----------
+    const attachNotes = useCallback((handle: NotesEditorHandle | null) => {
+      notesRef.current = handle
+      if (handle && pendingNotesAction.current) {
+        pendingNotesAction.current(handle)
+        pendingNotesAction.current = null
+      }
+    }, [])
+
+    const withNotes = (action: (notes: NotesEditorHandle) => void) => {
+      if (notesRef.current) action(notesRef.current)
+      else {
+        pendingNotesAction.current = action
+        setNotesOpen(true)
+      }
+    }
+
+    const openFromNotes = useCallback(
+      (link: PageLink) => {
+        if (link.bookId !== book.id) return onOpenPage(link)
+        jumpToPage(link.page)
+        if (window.matchMedia("(max-width: 639px)").matches) setNotesOpen(false)
+        return true
+      },
+      [book.id, onOpenPage, jumpToPage]
+    )
+
+    // Show "Quote to notes" while text on a page is selected
+    useEffect(() => {
+      if (!isPdf) return
+      const onSelectionChange = () => {
+        const sel = window.getSelection()
+        const text = sel?.toString().trim()
+        if (!sel || sel.rangeCount === 0 || !text) return setSelection(null)
+        const range = sel.getRangeAt(0)
+        const start = range.startContainer
+        const layer = (start instanceof Element ? start : start.parentElement)?.closest(".textLayer")
+        const pageEl = layer?.closest<HTMLElement>("[id^='page-']")
+        if (!pageEl || !scrollRef.current?.contains(pageEl)) return setSelection(null)
+        const rect = range.getBoundingClientRect()
+        setSelection({
+          text,
+          page: Number(pageEl.id.slice("page-".length)),
+          x: rect.left + rect.width / 2,
+          y: rect.top,
+        })
+      }
+      document.addEventListener("selectionchange", onSelectionChange)
+      return () => document.removeEventListener("selectionchange", onSelectionChange)
+    }, [isPdf])
+
+    const quoteSelection = () => {
+      if (!selection) return
+      const { text, page } = selection
+      window.getSelection()?.removeAllRanges()
+      setSelection(null)
+      setNotesOpen(true)
+      withNotes((notes) => notes.insertQuote(text, book.title, { bookId: book.id, page }))
+    }
+
     const zoomIn = useCallback(() => setScale((s) => clampScale((s ?? 1) + 0.1)), [])
     const zoomOut = useCallback(() => setScale((s) => clampScale((s ?? 1) - 0.1)), [])
     const fitWidth = useCallback(() => {
@@ -271,7 +360,12 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     useEffect(() => {
       const onKey = (e: KeyboardEvent) => {
         if (e.defaultPrevented) return
-        const tag = (e.target as HTMLElement | null)?.tagName
+        const target = e.target as HTMLElement | null
+        if (target?.isContentEditable) {
+          if (e.key === "Escape") target.blur()
+          return
+        }
+        const tag = target?.tagName
         if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return
         if (e.key === "ArrowRight") {
           e.preventDefault()
@@ -284,12 +378,13 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
         } else if (e.key === "-") {
           zoomOut()
         } else if (e.key === "Escape") {
-          onClose()
+          if (notesOpen) setNotesOpen(false)
+          else onClose()
         }
       }
       document.addEventListener("keydown", onKey)
       return () => document.removeEventListener("keydown", onKey)
-    }, [jumpToPage, zoomIn, zoomOut, onClose])
+    }, [jumpToPage, zoomIn, zoomOut, onClose, notesOpen])
 
     // ---------- 5. Tap to toggle toolbars, scroll to hide ----------
     const handleTap = (e: React.MouseEvent) => {
@@ -300,6 +395,7 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     }
 
     const handleScroll = () => {
+      setSelection(null)
       const el = scrollRef.current
       if (!el || !chromeVisible || !readyRef.current) return
       if (Math.abs(el.scrollTop - lastScrollTopRef.current) > 160) {
@@ -318,6 +414,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     const shownPercent = Math.round((shownPage / (totalPages || 1)) * 100)
     const saveLabel =
       saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Not saved yet"
+    // Leave room for the notes panel on wider screens
+    const besidePanel = notesOpen && "sm:right-[min(440px,45vw)]"
 
     return (
       <div className="relative h-[100dvh] bg-background text-foreground overflow-hidden select-none">
@@ -325,7 +423,7 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           ref={scrollRef}
           onClick={handleTap}
           onScroll={handleScroll}
-          className="absolute inset-0 overflow-auto"
+          className={cn("absolute inset-0 overflow-auto", besidePanel)}
         >
           {!isPdf ? (
             <div className="h-full flex items-center justify-center p-6">
@@ -380,7 +478,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
         <header
           className={cn(
             "absolute top-0 inset-x-0 z-20 bg-background border-b border-foreground transition-transform duration-100",
-            chromeVisible ? "translate-y-0" : "-translate-y-full"
+            chromeVisible ? "translate-y-0" : "-translate-y-full",
+            besidePanel
           )}
           aria-hidden={!chromeVisible}
         >
@@ -398,6 +497,20 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
             <h1 className="flex-1 min-w-0 text-center font-serif text-[15px] font-medium truncate px-2">
               {book.title}
             </h1>
+
+            <button
+              type="button"
+              onClick={() => setNotesOpen((open) => !open)}
+              aria-pressed={notesOpen}
+              className={cn(
+                "h-10 w-10 flex items-center justify-center shrink-0",
+                notesOpen ? "eink-selected" : "hover:bg-accent"
+              )}
+              title="Notes"
+              aria-label="Notes"
+            >
+              <NotebookPen className="w-5 h-5" />
+            </button>
 
             <DisplayMenu theme={theme} onThemeChange={onThemeChange}>
               {isPdf && (
@@ -445,7 +558,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           <footer
             className={cn(
               "absolute bottom-0 inset-x-0 z-20 bg-background border-t border-foreground transition-transform duration-100",
-              chromeVisible ? "translate-y-0" : "translate-y-full"
+              chromeVisible ? "translate-y-0" : "translate-y-full",
+              besidePanel
             )}
             aria-hidden={!chromeVisible}
           >
@@ -512,12 +626,77 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
 
         {/* Always-on footer when toolbars are hidden */}
         {isPdf && !chromeVisible && doc && (
-          <div className="pointer-events-none absolute bottom-0 inset-x-0 z-10 h-7 px-4 flex items-center justify-between text-[11px] text-muted-foreground bg-background/90 tabular-nums">
+          <div
+            className={cn(
+              "pointer-events-none absolute bottom-0 inset-x-0 z-10 h-7 px-4 flex items-center justify-between text-[11px] text-muted-foreground bg-background/90 tabular-nums",
+              besidePanel
+            )}
+          >
             <span>
               Page {currentPage} of {totalPages}
             </span>
             <span>{percent}%</span>
           </div>
+        )}
+
+        {selection && (
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={quoteSelection}
+            className="fixed z-40 h-9 px-3 flex items-center gap-1.5 eink-selected text-sm font-medium -translate-x-1/2"
+            style={{
+              left: Math.min(window.innerWidth - 90, Math.max(90, selection.x)),
+              top: selection.y > 64 ? selection.y - 44 : selection.y + 28,
+            }}
+          >
+            <TextQuote className="w-4 h-4" />
+            Quote to notes
+          </button>
+        )}
+
+        {notesOpen && (
+          <aside
+            className="absolute inset-y-0 right-0 z-30 w-full sm:w-[min(440px,45vw)] bg-background border-l border-foreground flex flex-col select-text"
+            aria-label="Notes"
+          >
+            <div className="h-14 shrink-0 px-4 flex items-center gap-2 border-b border-foreground">
+              <h2 className="flex-1 font-serif text-lg font-bold">Notes</h2>
+              <button
+                type="button"
+                onClick={() => setNotesOpen(false)}
+                className="h-10 w-10 -mr-2 flex items-center justify-center hover:bg-accent"
+                aria-label="Close notes"
+                title="Close notes (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4">
+              <NotesEditor
+                ref={attachNotes}
+                onOpenPage={openFromNotes}
+                toolbarClassName="sticky top-0 -mx-4 px-2"
+                toolbarExtra={
+                  isPdf && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        notesRef.current?.insertPageLink(book.title, {
+                          bookId: book.id,
+                          page: currentPage,
+                        })
+                      }
+                      className="h-9 px-2 ml-1 shrink-0 border border-foreground text-xs font-medium hover:bg-accent whitespace-nowrap"
+                      title="Insert a link to this page"
+                    >
+                      + p. {currentPage}
+                    </button>
+                  )
+                }
+              />
+            </div>
+          </aside>
         )}
       </div>
     )

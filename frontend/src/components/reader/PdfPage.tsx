@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react"
-import type { PDFDocumentProxy, PDFPageProxy } from "@/lib/pdf"
+import { getPdfJs, type PDFDocumentProxy, type PDFPageProxy } from "@/lib/pdf"
 import { cn } from "@/lib/utils"
 
 interface PageSize {
@@ -23,11 +23,13 @@ interface PdfPageProps {
  * - Mid-viewport detection reports the current page.
  * - HiDPI rendering (capped at 2x).
  * - Sepia / dark page tint via CSS filters.
+ * - Text layer on top of the canvas so text can be selected and quoted.
  */
 export const PdfPage: React.FC<PdfPageProps> = React.memo(
   ({ doc, pageNumber, scale, theme, baseSize, onPageVisible }) => {
     const containerRef = useRef<HTMLDivElement>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
+    const textLayerRef = useRef<HTMLDivElement>(null)
     const [isNearViewport, setIsNearViewport] = useState(false)
     const [actualSize, setActualSize] = useState<PageSize | null>(null)
     const [rendered, setRendered] = useState(false)
@@ -78,6 +80,7 @@ export const PdfPage: React.FC<PdfPageProps> = React.memo(
 
       let cancelled = false
       let renderTask: { cancel: () => void; promise: Promise<void> } | null = null
+      let textLayer: { cancel: () => void } | null = null
 
       const renderPage = async () => {
         try {
@@ -106,7 +109,21 @@ export const PdfPage: React.FC<PdfPageProps> = React.memo(
 
           renderTask = page.render({ canvasContext: ctx, viewport })
           await renderTask.promise
-          if (!cancelled) setRendered(true)
+          if (cancelled) return
+          setRendered(true)
+
+          const pdfjs = await getPdfJs()
+          const container = textLayerRef.current
+          if (cancelled || !container) return
+          container.replaceChildren()
+          container.style.setProperty("--scale-factor", String(scale))
+          const layer = new pdfjs.TextLayer({
+            textContentSource: page.streamTextContent(),
+            container,
+            viewport: page.getViewport({ scale }),
+          })
+          textLayer = layer
+          await layer.render()
         } catch (err: any) {
           if (err?.name !== "RenderingCancelledException" && !cancelled) {
             console.error(`Error rendering page ${pageNumber}:`, err)
@@ -120,6 +137,7 @@ export const PdfPage: React.FC<PdfPageProps> = React.memo(
         cancelled = true
         try {
           renderTask?.cancel()
+          textLayer?.cancel()
         } catch {
           // ignore
         }
@@ -155,6 +173,7 @@ export const PdfPage: React.FC<PdfPageProps> = React.memo(
             ref={canvasRef}
             className={cn("block", rendered ? "opacity-100" : "opacity-0", tint)}
           />
+          <div ref={textLayerRef} className={cn("textLayer", !rendered && "hidden")} />
         </div>
       </div>
     )

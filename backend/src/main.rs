@@ -161,6 +161,7 @@ async fn main() {
             get(routes::get_categories).post(routes::create_category),
         )
         .route("/api/categories/{id}", delete(routes::delete_category))
+        .route("/api/notes", get(routes::get_notes).put(routes::save_notes))
         .route("/api/{*rest}", any(frontend::api_not_found));
 
     let app = match frontend::routes(&config.frontend_dir) {
@@ -205,7 +206,7 @@ async fn main() {
         Some(Ok(origin)) => app.layer(
             CorsLayer::new()
                 .allow_origin(origin)
-                .allow_methods([Method::GET, Method::POST, Method::DELETE])
+                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
                 .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::RANGE])
                 .expose_headers([
                     header::CONTENT_RANGE,

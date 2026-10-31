@@ -122,6 +122,24 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
+    // The notes page: one document. `version` goes up on every save so two
+    // open tabs can't silently overwrite each other.
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            content TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("INSERT OR IGNORE INTO notes (id) VALUES (1)")
+        .execute(pool)
+        .await?;
+
     sqlx::query(
         r#"
         INSERT OR IGNORE INTO categories (id, name) VALUES
@@ -637,6 +655,53 @@ pub async fn set_book_categories(
     Ok(names)
 }
 
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+
+pub const MAX_NOTES_BYTES: usize = 1024 * 1024;
+
+#[derive(Serialize, sqlx::FromRow, Clone, Debug, PartialEq)]
+pub struct Notes {
+    pub content: String,
+    pub version: i64,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SaveNotesPayload {
+    pub content: String,
+    /// The version the client started editing from.
+    pub base_version: i64,
+}
+
+pub async fn get_notes(pool: &SqlitePool) -> Result<Notes, sqlx::Error> {
+    sqlx::query_as::<_, Notes>("SELECT content, version, updated_at FROM notes WHERE id = 1")
+        .fetch_one(pool)
+        .await
+}
+
+/// Saves only if nobody else saved since `base_version`; `Ok(None)` means
+/// someone did (conflict).
+pub async fn save_notes(
+    pool: &SqlitePool,
+    content: &str,
+    base_version: i64,
+) -> Result<Option<Notes>, sqlx::Error> {
+    sqlx::query_as::<_, Notes>(
+        r#"
+        UPDATE notes
+        SET content = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1 AND version = ?
+        RETURNING content, version, updated_at
+        "#,
+    )
+    .bind(content)
+    .bind(base_version)
+    .fetch_optional(pool)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -876,5 +941,22 @@ mod tests {
         let again = migrate_legacy_book_ids(&pool, &legacy, None).await.unwrap();
         assert_eq!(again, IdMigrationReport::default());
         assert!(get_progress(&pool, "2").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_notes_versioning() {
+        let pool = test_pool().await;
+        let empty = get_notes(&pool).await.unwrap();
+        assert_eq!((empty.content.as_str(), empty.version), ("", 0));
+
+        let saved = save_notes(&pool, "# Ideas", 0).await.unwrap().unwrap();
+        assert_eq!(saved.version, 1);
+        // A second tab still on version 0 must not overwrite it
+        assert!(save_notes(&pool, "stale", 0).await.unwrap().is_none());
+        assert_eq!(get_notes(&pool).await.unwrap().content, "# Ideas");
+
+        // Running the migration again keeps the notes
+        migrate(&pool).await.unwrap();
+        assert_eq!(get_notes(&pool).await.unwrap().version, 1);
     }
 }
