@@ -41,11 +41,21 @@ export async function getPdfJs(): Promise<any> {
   return pdfjsPromise
 }
 
-export async function loadPdfDocument(url: string): Promise<PDFDocumentProxy> {
+/** `total` is 0 when the server doesn't say how big the file is. */
+export type LoadProgress = (loaded: number, total: number) => void
+
+export async function loadPdfDocument(
+  url: string,
+  onProgress?: LoadProgress
+): Promise<PDFDocumentProxy> {
   const pdfjs = await getPdfJs()
   const loadingTask = pdfjs.getDocument({
     url,
     cMapPacked: true,
   })
+  if (onProgress) {
+    loadingTask.onProgress = ({ loaded, total }: { loaded: number; total?: number }) =>
+      onProgress(loaded, total ?? 0)
+  }
   return loadingTask.promise
 }

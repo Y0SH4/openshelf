@@ -254,6 +254,26 @@
 }
 
 @layer utilities {
+  /* Loading bar of unknown length: a segment sliding back and forth */
+  .eink-indeterminate {
+    animation: eink-indeterminate 1.4s ease-in-out infinite alternate;
+  }
+  @keyframes eink-indeterminate {
+    from {
+      transform: translateX(-10%);
+    }
+    to {
+      transform: translateX(310%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .eink-indeterminate {
+      animation: none;
+      width: 100%;
+      opacity: 0.4;
+    }
+  }
+
   .scrollbar-none {
     scrollbar-width: none;
   }

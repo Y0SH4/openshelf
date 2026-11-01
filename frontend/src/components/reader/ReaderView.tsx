@@ -80,6 +80,44 @@ function storeScale(s: number) {
  * - Notes panel on the right; selected PDF text can be quoted into it.
  * - Keys: ← / → page, + / − zoom, Esc back to Library.
  */
+const formatMB = (bytes: number) => (bytes / 1_048_576).toFixed(1)
+
+/** Real download progress when the size is known, otherwise a sliding bar. */
+const DownloadProgress: React.FC<{ progress: { loaded: number; total: number } | null }> = ({
+  progress,
+}) => {
+  const known = progress != null && progress.total > 0
+  const ratio = known ? Math.min(1, progress.loaded / progress.total) : 0
+  return (
+    <div className="mt-5 w-64 max-w-full">
+      <div
+        className="h-1 bg-rule overflow-hidden"
+        role="progressbar"
+        aria-label="Downloading book"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={known ? Math.round(ratio * 100) : undefined}
+      >
+        {known ? (
+          <div
+            className="h-full bg-foreground transition-[width] duration-200 ease-out"
+            style={{ width: `${ratio * 100}%` }}
+          />
+        ) : (
+          <div className="h-full w-1/3 bg-foreground eink-indeterminate" />
+        )}
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground tabular-nums h-4">
+        {known
+          ? `${formatMB(progress.loaded)} / ${formatMB(progress.total)} MB · ${Math.round(ratio * 100)}%`
+          : progress && progress.loaded > 0
+          ? `${formatMB(progress.loaded)} MB`
+          : "Connecting…"}
+      </p>
+    </div>
+  )
+}
+
 export const ReaderView: React.FC<ReaderViewProps> = React.memo(
   ({ book, startPage, onOpenPage, onClose, theme, onThemeChange, onProgressSaved }) => {
     const isPdf = book.format === "pdf"
@@ -90,6 +128,7 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
     const [baseSize, setBaseSize] = useState<{ width: number; height: number } | null>(null)
     const [loadingDoc, setLoadingDoc] = useState(isPdf)
+    const [download, setDownload] = useState<{ loaded: number; total: number } | null>(null)
     const [loadError, setLoadError] = useState<string | null>(null)
     const [scale, setScale] = useState<number | null>(readStoredScale)
 
@@ -134,8 +173,18 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       let loaded: PDFDocumentProxy | null = null
       setLoadingDoc(true)
       setLoadError(null)
+      setDownload(null)
 
-      loadPdfDocument(`/api/books/${book.id}/raw`)
+      // PDF.js reports progress very often; update the bar at most ~10x a second
+      let lastUpdate = 0
+      const onProgress = (loaded: number, total: number) => {
+        const now = performance.now()
+        if (cancelled || (now - lastUpdate < 100 && loaded < total)) return
+        lastUpdate = now
+        setDownload({ loaded, total })
+      }
+
+      loadPdfDocument(`/api/books/${book.id}/raw`, onProgress)
         .then(async (pdf) => {
           loaded = pdf
           if (cancelled) return
@@ -459,10 +508,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
             </div>
           ) : loadingDoc ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-6">
-              <p className="font-serif text-lg">Opening {book.title}…</p>
-              <div className="mt-4 w-40 h-[2px] bg-rule overflow-hidden">
-                <div className="h-full w-1/3 bg-foreground animate-pulse" />
-              </div>
+              <p className="font-serif text-lg max-w-md">Opening {book.title}…</p>
+              <DownloadProgress progress={download} />
             </div>
           ) : loadError ? (
             <div className="h-full flex flex-col pt-16 pb-8 px-4">
