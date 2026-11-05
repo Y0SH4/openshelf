@@ -17,6 +17,7 @@ Point OpenShelf at the folders where you keep your books. It scans them (includi
 - **PDF reader.** Pages load lazily, so even large books open fast. It has zoom and fit-to-width, white, sepia and black page colors, and keyboard navigation (← → + − Esc).
 - **Reading progress** is saved automatically, per book.
 - **Notes.** Notion-style notes shown as cards, with headings, lists, to-dos and quotes. Open them from the Library or next to the book you're reading. Select text in a PDF to quote it into a note, or insert a link to the current page; clicking a page link opens the book at that page. Notes are stored as Markdown.
+- **Translate selected text** into Indonesian, right in the reader, with your own [LibreTranslate](https://libretranslate.com) server. Without one, the Translate button opens Google Translate.
 - **Collections, search, filters and sorting.** Grid or list view.
 - **One private account**, protected by a setup code on first run and rate-limited sign-in.
 - EPUB books can be downloaded. In-browser EPUB reading is planned.
@@ -83,6 +84,8 @@ Everything is optional and set with environment variables.
 | `OPENSHELF_SECURE_COOKIE` | `false` | Set to `true` when OpenShelf is served over HTTPS |
 | `OPENSHELF_TRUST_PROXY` | `false` | Set to `true` behind a reverse proxy, so sign-in limits use the real client IP from `X-Forwarded-For` |
 | `OPENSHELF_SETUP_CODE` | random | Code for creating the first account, at least 8 letters or digits. Without it, a random code is printed in the log on every start |
+| `OPENSHELF_TRANSLATE_URL` | | LibreTranslate server for translating selected text, e.g. `http://libretranslate:5000` (see `docker-compose.yml`). Without it, Translate opens Google Translate |
+| `OPENSHELF_TRANSLATE_API_KEY` | | API key, if that LibreTranslate server needs one |
 | `OPENSHELF_FRONTEND_DIR` | `frontend/dist` | Built frontend to serve |
 | `OPENSHELF_CORS_ORIGIN` | | Only needed if the frontend is hosted on a different origin |
 

@@ -22,6 +22,7 @@ use crate::db::{
 };
 use crate::scanner::{self, BookFormat, BookItem, Library};
 use crate::security::LoginLimiter;
+use crate::translate::Translator;
 
 // ---------------------------------------------------------------------------
 // State & error
@@ -35,6 +36,8 @@ pub struct AppState {
     pub login_limiter: Arc<LoginLimiter>,
     /// Code for creating the first account; `None` once an account exists.
     pub setup_code: Arc<Mutex<Option<String>>>,
+    /// `None` when no LibreTranslate server is configured
+    pub translator: Option<Arc<Translator>>,
 }
 
 /// Handlers that only need the database can still use `State<SqlitePool>`.

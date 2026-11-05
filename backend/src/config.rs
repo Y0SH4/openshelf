@@ -11,6 +11,8 @@
 //! | `OPENSHELF_BROWSE_ROOTS` | `$HOME:/mnt:/media:/run/media:/srv` — folders that can be browsed and added as libraries (`/` = everything) |
 //! | `OPENSHELF_TRUST_PROXY` | `false`; set `true` behind Nginx/Caddy (client IP from `X-Forwarded-For`) |
 //! | `OPENSHELF_SETUP_CODE`  | (random, printed in the log) code for creating the first account; at least 8 letters/digits |
+//! | `OPENSHELF_TRANSLATE_URL` | (empty = open Google Translate instead) LibreTranslate server for translating selected text |
+//! | `OPENSHELF_TRANSLATE_API_KEY` | (optional) API key for that LibreTranslate server |
 
 use std::env;
 use std::path::PathBuf;
@@ -29,6 +31,8 @@ pub struct Config {
     pub trust_proxy: bool,
     /// Fixed setup code instead of a random one (still checked for length at startup).
     pub setup_code: Option<String>,
+    pub translate_url: Option<String>,
+    pub translate_api_key: Option<String>,
 }
 
 fn non_empty(key: &str) -> Option<String> {
@@ -94,6 +98,8 @@ impl Config {
             browse_roots: browse_roots(non_empty("OPENSHELF_BROWSE_ROOTS")),
             trust_proxy: flag("OPENSHELF_TRUST_PROXY"),
             setup_code: non_empty("OPENSHELF_SETUP_CODE"),
+            translate_url: non_empty("OPENSHELF_TRANSLATE_URL"),
+            translate_api_key: non_empty("OPENSHELF_TRANSLATE_API_KEY"),
         }
     }
 

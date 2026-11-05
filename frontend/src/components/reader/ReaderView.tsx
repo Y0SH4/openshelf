@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Languages,
   Minus,
   NotebookPen,
   Plus,
@@ -11,11 +12,13 @@ import {
   X,
 } from "lucide-react"
 import { PdfPage } from "@/components/reader/PdfPage"
+import { TranslationCard } from "@/components/reader/TranslationCard"
 import { DisplayMenu } from "@/components/reading/DisplayMenu"
 import { NotesEditor, type NotesEditorHandle } from "@/components/notes/NotesEditor"
 import { NotesList } from "@/components/notes/NotesList"
 import { createNote, readLastNoteId, storeLastNoteId, type PageLink } from "@/lib/notes"
 import { loadPdfDocument, type PDFDocumentProxy } from "@/lib/pdf"
+import { googleTranslateUrl, translationEnabled } from "@/lib/translate"
 import { cn } from "@/lib/utils"
 import type { Book } from "@/components/library/BookCard"
 import type { ThemeMode } from "@/components/library/LibraryHeader"
@@ -142,6 +145,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     /** Note shown in the panel; null shows the list of notes */
     const [panelNoteId, setPanelNoteId] = useState<number | null>(readLastNoteId)
     const [selection, setSelection] = useState<Selection | null>(null)
+    /** Selected text being translated, with the page it's on */
+    const [translating, setTranslating] = useState<{ text: string; page: number } | null>(null)
     const notesRef = useRef<NotesEditorHandle | null>(null)
     const pendingNotesAction = useRef<((notes: NotesEditorHandle) => void) | null>(null)
 
@@ -411,6 +416,32 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       window.getSelection()?.removeAllRanges()
       setSelection(null)
       void withNotes((notes) => notes.insertQuote(text, book.title, { bookId: book.id, page }))
+    }
+
+    const translateSelection = async () => {
+      if (!selection) return
+      const { text, page } = selection
+      if (!(await translationEnabled())) {
+        window.open(googleTranslateUrl(text), "_blank", "noopener,noreferrer")
+        return
+      }
+      window.getSelection()?.removeAllRanges()
+      setSelection(null)
+      setTranslating({ text, page })
+    }
+
+    const closeTranslation = useCallback(() => setTranslating(null), [])
+
+    // Ask early, so Translate can open Google Translate right inside the click
+    useEffect(() => {
+      void translationEnabled()
+    }, [])
+
+    const addTranslationToNotes = (translated: string) => {
+      if (!translating) return
+      const { page } = translating
+      setTranslating(null)
+      void withNotes((notes) => notes.insertQuote(translated, book.title, { bookId: book.id, page }))
     }
 
     const zoomIn = useCallback(() => setScale((s) => clampScale((s ?? 1) + 0.1)), [])
@@ -702,19 +733,41 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
         )}
 
         {selection && (
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={quoteSelection}
-            className="fixed z-40 h-9 px-3 flex items-center gap-1.5 eink-selected text-sm font-medium -translate-x-1/2"
+          <div
+            className="fixed z-40 flex eink-selected text-sm font-medium -translate-x-1/2 divide-x divide-background/30"
             style={{
-              left: Math.min(window.innerWidth - 90, Math.max(90, selection.x)),
+              left: Math.min(window.innerWidth - 130, Math.max(130, selection.x)),
               top: selection.y > 64 ? selection.y - 44 : selection.y + 28,
             }}
+            onMouseDown={(e) => e.preventDefault()}
           >
-            <TextQuote className="w-4 h-4" />
-            Quote to notes
-          </button>
+            <button
+              type="button"
+              onClick={quoteSelection}
+              className="h-9 px-3 flex items-center gap-1.5 hover:opacity-80"
+            >
+              <TextQuote className="w-4 h-4" />
+              Quote to notes
+            </button>
+            <button
+              type="button"
+              onClick={translateSelection}
+              className="h-9 px-3 flex items-center gap-1.5 hover:opacity-80"
+            >
+              <Languages className="w-4 h-4" />
+              Translate
+            </button>
+          </div>
+        )}
+
+        {translating && (
+          <TranslationCard
+            key={translating.text}
+            text={translating.text}
+            onClose={closeTranslation}
+            onAddToNotes={addTranslationToNotes}
+            className={cn(chromeVisible ? "bottom-[6.5rem]" : "bottom-10", besidePanel && "sm:left-[calc((100%-min(440px,45vw))/2)]")}
+          />
         )}
 
         {notesOpen && (

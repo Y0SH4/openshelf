@@ -17,6 +17,7 @@ mod frontend;
 mod routes;
 mod scanner;
 mod security;
+mod translate;
 
 use config::Config;
 use routes::AppState;
@@ -150,6 +151,13 @@ async fn main() {
         config: config.clone(),
         login_limiter: Arc::new(LoginLimiter::default()),
         setup_code: Arc::new(std::sync::Mutex::new(setup_code)),
+        translator: config.translate_url.as_deref().map(|url| {
+            println!("🌐 Translating with LibreTranslate at {url}");
+            Arc::new(translate::Translator::new(
+                url,
+                config.translate_api_key.clone(),
+            ))
+        }),
     };
 
     let app = Router::new()
@@ -190,6 +198,10 @@ async fn main() {
             get(routes::get_note)
                 .put(routes::save_note)
                 .delete(routes::delete_note),
+        )
+        .route(
+            "/api/translate",
+            get(translate::status).post(translate::translate),
         )
         .route("/api/{*rest}", any(frontend::api_not_found));
 

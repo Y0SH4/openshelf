@@ -19,7 +19,22 @@ services:
     #   # Behind an HTTPS reverse proxy (Caddy, Nginx, Traefik):
     #   OPENSHELF_SECURE_COOKIE: "true"
     #   OPENSHELF_TRUST_PROXY: "true"
+    #   # Translate selected text with the libretranslate service below
+    #   OPENSHELF_TRANSLATE_URL: "http://libretranslate:5000"
     restart: unless-stopped
+
+  # Optional: translate selected text inside the reader, on your own server.
+  # Uncomment, set OPENSHELF_TRANSLATE_URL above, and pick the languages you
+  # need (each language pair adds memory and disk use).
+  # libretranslate:
+  #   image: libretranslate/libretranslate:latest
+  #   container_name: libretranslate
+  #   environment:
+  #     LT_LOAD_ONLY: "en,id"
+  #   volumes:
+  #     - libretranslate-models:/home/libretranslate/.local
+  #   restart: unless-stopped
 
 volumes:
   openshelf-data:
+  # libretranslate-models:
