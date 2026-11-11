@@ -55,7 +55,7 @@ const MAX_SCALE = 4
 /** "Fit width" never goes above this, so pages aren't huge on wide screens */
 const MAX_FIT_SCALE = 1.6
 /** Each zoom button press */
-const ZOOM_STEP = 1.25
+const ZOOM_STEP = 1.1
 const ZOOM_KEY = "openshelf_reader_zoom"
 const SAVE_DELAY_MS = 1200
 
