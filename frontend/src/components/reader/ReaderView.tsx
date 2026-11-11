@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react"
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react"
 import { apiFetch } from "@/lib/api"
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { PdfPage } from "@/components/reader/PdfPage"
 import { TranslationCard } from "@/components/reader/TranslationCard"
+import { resetPreview, usePinchZoom, type Point } from "@/components/reader/usePinchZoom"
 import { DisplayMenu } from "@/components/reading/DisplayMenu"
 import { NotesEditor, type NotesEditorHandle } from "@/components/notes/NotesEditor"
 import { NotesList } from "@/components/notes/NotesList"
@@ -49,28 +50,50 @@ interface Selection {
   y: number
 }
 
-const MIN_SCALE = 0.6
-const MAX_SCALE = 2.5
-const SCALE_KEY = "openshelf_reader_scale"
+const MIN_SCALE = 0.25
+const MAX_SCALE = 4
+/** "Fit width" never goes above this, so pages aren't huge on wide screens */
+const MAX_FIT_SCALE = 1.6
+/** Each zoom button press */
+const ZOOM_STEP = 1.25
+const ZOOM_KEY = "openshelf_reader_zoom"
 const SAVE_DELAY_MS = 1200
 
-const clampScale = (s: number) =>
-  Number(Math.min(MAX_SCALE, Math.max(MIN_SCALE, s)).toFixed(2))
+/** "fit" follows the screen width (also after rotating a phone); a number is a fixed scale. */
+type Zoom = "fit" | number
 
-function readStoredScale(): number | null {
+const clampScale = (s: number) =>
+  Number(Math.min(MAX_SCALE, Math.max(MIN_SCALE, s)).toFixed(3))
+
+/** Space beside the pages: px-2 on phones, px-4 from `sm`, plus the page border */
+const sidePadding = (width: number) => (width < 640 ? 8 : 16) * 2 + 2
+
+function readStoredZoom(): Zoom {
   try {
-    const v = Number(localStorage.getItem(SCALE_KEY))
-    return Number.isFinite(v) && v > 0 ? clampScale(v) : null
+    const v = localStorage.getItem(ZOOM_KEY)
+    const n = Number(v)
+    return v && v !== "fit" && Number.isFinite(n) && n > 0 ? clampScale(n) : "fit"
   } catch {
-    return null
+    return "fit"
   }
 }
-function storeScale(s: number) {
+function storeZoom(zoom: Zoom) {
   try {
-    localStorage.setItem(SCALE_KEY, String(s))
+    localStorage.setItem(ZOOM_KEY, String(zoom))
   } catch {
     // ignore
   }
+}
+
+/** A point on a page that should stay under the same spot on screen while zooming. */
+interface ZoomAnchor {
+  page: number
+  /** Position on the page, 0–1 */
+  fx: number
+  fy: number
+  /** Where it should be, relative to the scrolling area */
+  ax: number
+  ay: number
 }
 
 /**
@@ -81,7 +104,8 @@ function storeScale(s: number) {
  * - Progress auto-saves 1.2s after you stop on a page, and is flushed when
  *   the reader closes or the tab is hidden (fetch keepalive, JSON).
  * - Notes panel on the right; selected PDF text can be quoted into it.
- * - Keys: ← / → page, + / − zoom, Esc back to Library.
+ * - Zoom: "fit width" by default; buttons, pinch, Ctrl + wheel, double tap.
+ * - Keys: ← / → page, + / − / 0 zoom, Esc back to Library.
  */
 const formatMB = (bytes: number) => (bytes / 1_048_576).toFixed(1)
 
@@ -133,7 +157,14 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     const [loadingDoc, setLoadingDoc] = useState(isPdf)
     const [download, setDownload] = useState<{ loaded: number; total: number } | null>(null)
     const [loadError, setLoadError] = useState<string | null>(null)
-    const [scale, setScale] = useState<number | null>(readStoredScale)
+    const [zoom, setZoom] = useState<Zoom>(readStoredZoom)
+    /** Width of the reading area, for "fit width" */
+    const [viewWidth, setViewWidth] = useState(0)
+    const fitScale =
+      baseSize && viewWidth > 0
+        ? clampScale(Math.min(MAX_FIT_SCALE, (viewWidth - sidePadding(viewWidth)) / baseSize.width))
+        : null
+    const scale = zoom === "fit" ? fitScale : baseSize ? zoom : null
 
     const [currentPage, setCurrentPage] = useState<number>(initialPageRef.current)
     const [totalPages, setTotalPages] = useState<number>(book.progress?.total_pages || 1)
@@ -199,12 +230,6 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
 
           setBaseSize({ width: vp.width, height: vp.height })
           setTotalPages(pdf.numPages)
-          // First time: fit the page to the screen width
-          setScale((s) => {
-            if (s != null) return s
-            const available = (scrollRef.current?.clientWidth ?? window.innerWidth) - 32
-            return clampScale(Math.min(1.6, available / vp.width))
-          })
           setDoc(pdf)
           setLoadingDoc(false)
         })
@@ -327,24 +352,118 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       []
     )
 
-    // Keep the same page in view when zoom changes
-    const prevScaleRef = useRef(scale)
-    useEffect(() => {
-      if (scale == null || prevScaleRef.current === scale) return
-      const hadScale = prevScaleRef.current != null
-      prevScaleRef.current = scale
-      storeScale(scale)
-      if (!hadScale || !readyRef.current) return
-      const page = currentPageRef.current
-      readyRef.current = false
-      requestAnimationFrame(() => {
-        document.getElementById(`page-${page}`)?.scrollIntoView({ block: "start" })
-        window.setTimeout(() => {
-          readyRef.current = true
-          lastScrollTopRef.current = scrollRef.current?.scrollTop ?? 0
+    // ---------- Zoom ----------
+    const contentRef = useRef<HTMLDivElement>(null)
+    const scaleRef = useRef(scale)
+    const fitScaleRef = useRef(fitScale)
+    const anchorRef = useRef<ZoomAnchor | null>(null)
+
+    /** The page spot under a screen point, to keep it there after zooming. */
+    const anchorAt = useCallback((point: Point, target: Point = point): ZoomAnchor | null => {
+      const main = scrollRef.current
+      if (!main) return null
+      const pageEl =
+        document.elementFromPoint(point.x, point.y)?.closest<HTMLElement>("[id^='page-']") ??
+        document.getElementById(`page-${currentPageRef.current}`)
+      const box = (pageEl?.firstElementChild as HTMLElement | null)?.getBoundingClientRect()
+      if (!pageEl || !box || !box.width || !box.height) return null
+      const area = main.getBoundingClientRect()
+      return {
+        page: Number(pageEl.id.slice("page-".length)),
+        fx: (point.x - box.left) / box.width,
+        fy: (point.y - box.top) / box.height,
+        ax: target.x - area.left,
+        ay: target.y - area.top,
+      }
+    }, [])
+
+    const viewCenter = (): Point | null => {
+      const area = scrollRef.current?.getBoundingClientRect()
+      return area ? { x: area.left + area.width / 2, y: area.top + area.height / 2 } : null
+    }
+
+    /** Changes the zoom, keeping `anchor` (default: the middle of the screen) in place. */
+    const applyZoom = useCallback(
+      (next: Zoom, anchor?: ZoomAnchor | null) => {
+        const nextScale = next === "fit" ? fitScaleRef.current : next
+        if (nextScale != null && nextScale !== scaleRef.current) {
+          const center = viewCenter()
+          anchorRef.current = anchor ?? (center ? anchorAt(center) : null)
+        } else {
+          resetPreview(contentRef.current)
+        }
+        setZoom(next)
+        storeZoom(next)
+      },
+      [anchorAt]
+    )
+
+    // After a zoom: drop the pinch preview and scroll so the anchor stays put.
+    // Runs before the browser paints, so the view doesn't jump.
+    useLayoutEffect(() => {
+      scaleRef.current = scale
+      fitScaleRef.current = fitScale
+      const main = scrollRef.current
+      const anchor = anchorRef.current
+      anchorRef.current = null
+      resetPreview(contentRef.current)
+      if (!main || !anchor || scale == null) return
+      const box = document
+        .getElementById(`page-${anchor.page}`)
+        ?.firstElementChild?.getBoundingClientRect()
+      if (!box) return
+      const area = main.getBoundingClientRect()
+      main.scrollLeft += box.left + anchor.fx * box.width - (area.left + anchor.ax)
+      main.scrollTop += box.top + anchor.fy * box.height - (area.top + anchor.ay)
+      lastScrollTopRef.current = main.scrollTop
+    }, [scale, fitScale])
+
+    // Follow the width of the reading area (window resize, phone rotation,
+    // notes panel), keeping the reading position while "fit width" re-fits
+    useLayoutEffect(() => {
+      const main = scrollRef.current
+      if (!main) return
+      const widthRef = { current: main.clientWidth }
+      setViewWidth(widthRef.current)
+      let timer: number | null = null
+      const observer = new ResizeObserver(() => {
+        if (timer) window.clearTimeout(timer)
+        timer = window.setTimeout(() => {
+          timer = null
+          const width = main.clientWidth
+          if (width === widthRef.current) return
+          widthRef.current = width
+          const center = viewCenter()
+          if (center && readyRef.current) anchorRef.current = anchorAt(center)
+          setViewWidth(width)
         }, 120)
       })
-    }, [scale])
+      observer.observe(main)
+      return () => {
+        if (timer) window.clearTimeout(timer)
+        observer.disconnect()
+      }
+    }, [anchorAt])
+
+    /** Snap to "fit" when a zoom lands close to it. */
+    const toZoom = (next: number): Zoom => {
+      const fit = fitScaleRef.current
+      return fit != null && Math.abs(next - fit) / fit < 0.04 ? "fit" : clampScale(next)
+    }
+
+    usePinchZoom({
+      scrollRef,
+      contentRef,
+      getScale: () => scaleRef.current,
+      clamp: clampScale,
+      onZoom: (next, start, end) => applyZoom(toZoom(next), anchorAt(start, end)),
+      onDoubleTap: (at) => {
+        const current = scaleRef.current
+        const fit = fitScaleRef.current
+        if (current == null || fit == null) return
+        applyZoom(current > fit * 1.1 ? "fit" : clampScale(fit * 2), anchorAt(at))
+      },
+    })
 
     // ---------- Notes ----------
     const attachNotes = useCallback((handle: NotesEditorHandle | null) => {
@@ -444,13 +563,24 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       void withNotes((notes) => notes.insertQuote(translated, book.title, { bookId: book.id, page }))
     }
 
-    const zoomIn = useCallback(() => setScale((s) => clampScale((s ?? 1) + 0.1)), [])
-    const zoomOut = useCallback(() => setScale((s) => clampScale((s ?? 1) - 0.1)), [])
-    const fitWidth = useCallback(() => {
-      if (!baseSize) return
-      const available = (scrollRef.current?.clientWidth ?? window.innerWidth) - 32
-      setScale(clampScale(available / baseSize.width))
-    }, [baseSize])
+    const zoomBy = useCallback(
+      (factor: number) => {
+        const current = scaleRef.current
+        if (current == null) return
+        const fit = fitScaleRef.current
+        const next = current * factor
+        // Stop at "fit width" when passing it
+        const crossesFit = fit != null && (current - fit) * (next - fit) < 0
+        applyZoom(crossesFit ? "fit" : toZoom(next))
+      },
+      // toZoom only reads refs
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [applyZoom]
+    )
+    const zoomIn = useCallback(() => zoomBy(ZOOM_STEP), [zoomBy])
+    const zoomOut = useCallback(() => zoomBy(1 / ZOOM_STEP), [zoomBy])
+    const fitWidth = useCallback(() => applyZoom("fit"), [applyZoom])
+    const zoomLabel = zoom === "fit" ? "Fit" : `${Math.round((scale ?? 1) * 100)}%`
 
     useEffect(() => {
       const onKey = (e: KeyboardEvent) => {
@@ -472,6 +602,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           zoomIn()
         } else if (e.key === "-") {
           zoomOut()
+        } else if (e.key === "0") {
+          fitWidth()
         } else if (e.key === "Escape") {
           if (notesOpen) setNotesOpen(false)
           else onClose()
@@ -479,7 +611,7 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       }
       document.addEventListener("keydown", onKey)
       return () => document.removeEventListener("keydown", onKey)
-    }, [jumpToPage, zoomIn, zoomOut, onClose, notesOpen])
+    }, [jumpToPage, zoomIn, zoomOut, fitWidth, onClose, notesOpen])
 
     // ---------- 5. Tap to toggle toolbars, scroll to hide ----------
     const handleTap = (e: React.MouseEvent) => {
@@ -518,7 +650,7 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           ref={scrollRef}
           onClick={handleTap}
           onScroll={handleScroll}
-          className={cn("absolute inset-0 overflow-auto", besidePanel)}
+          className={cn("absolute inset-0 overflow-auto touch-pan-x touch-pan-y", besidePanel)}
         >
           {!isPdf ? (
             <div className="h-full flex items-center justify-center p-6">
@@ -552,7 +684,10 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
               />
             </div>
           ) : doc && baseSize && scale != null ? (
-            <div className="min-w-full w-max flex flex-col items-center pt-16 pb-24 px-4">
+            <div
+              ref={contentRef}
+              className="min-w-full w-max flex flex-col items-center pt-16 pb-24 px-2 sm:px-4"
+            >
               {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((pageNum) => (
                 <PdfPage
                   key={pageNum}
@@ -615,19 +750,19 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
                     <button
                       type="button"
                       onClick={zoomOut}
-                      disabled={scale != null && scale <= MIN_SCALE}
+                      disabled={scale == null || scale <= MIN_SCALE}
                       className="h-10 w-10 flex items-center justify-center hover:bg-accent disabled:opacity-30"
                       aria-label="Zoom out"
                     >
                       <Minus className="w-4 h-4" />
                     </button>
                     <span className="flex-1 text-center text-sm tabular-nums border-x border-foreground h-10 leading-10">
-                      {Math.round((scale ?? 1) * 100)}%
+                      {zoomLabel}
                     </span>
                     <button
                       type="button"
                       onClick={zoomIn}
-                      disabled={scale != null && scale >= MAX_SCALE}
+                      disabled={scale == null || scale >= MAX_SCALE}
                       className="h-10 w-10 flex items-center justify-center hover:bg-accent disabled:opacity-30"
                       aria-label="Zoom in"
                     >
@@ -637,10 +772,14 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
                   <button
                     type="button"
                     onClick={fitWidth}
-                    className="mt-2 w-full h-9 text-sm border border-rule hover:bg-accent"
+                    disabled={zoom === "fit"}
+                    className="mt-2 w-full h-9 text-sm border border-rule hover:bg-accent disabled:opacity-40"
                   >
                     Fit to width
                   </button>
+                  <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+                    Pinch, Ctrl + scroll, or double-tap the page to zoom.
+                  </p>
                 </>
               )}
             </DisplayMenu>
@@ -710,7 +849,37 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
                   />
                   <span className="text-muted-foreground tabular-nums">of {totalPages}</span>
                 </form>
-                <span className="text-muted-foreground">{saveLabel}</span>
+                <div className="flex items-center border border-foreground h-7" role="group" aria-label="Zoom">
+                  <button
+                    type="button"
+                    onClick={zoomOut}
+                    disabled={scale == null || scale <= MIN_SCALE}
+                    className="h-full w-7 flex items-center justify-center hover:bg-accent disabled:opacity-30"
+                    aria-label="Zoom out"
+                    title="Zoom out (−)"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={fitWidth}
+                    className="h-full min-w-11 px-1 border-x border-foreground tabular-nums hover:bg-accent"
+                    title="Fit to width (0)"
+                  >
+                    {zoomLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={zoomIn}
+                    disabled={scale == null || scale >= MAX_SCALE}
+                    className="h-full w-7 flex items-center justify-center hover:bg-accent disabled:opacity-30"
+                    aria-label="Zoom in"
+                    title="Zoom in (+)"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <span className="hidden sm:inline text-muted-foreground">{saveLabel}</span>
                 <span className="font-medium tabular-nums">{shownPercent}%</span>
               </div>
             </div>

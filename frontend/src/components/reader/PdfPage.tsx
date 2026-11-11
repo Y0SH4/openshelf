@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react"
 import { getPdfJs, type PDFDocumentProxy, type PDFPageProxy } from "@/lib/pdf"
 import { cn } from "@/lib/utils"
 
+const MAX_CANVAS_PIXELS = 16_000_000
+
 interface PageSize {
   width: number
   height: number
@@ -99,7 +101,10 @@ export const PdfPage: React.FC<PdfPageProps> = React.memo(
           const ctx = canvas.getContext("2d", { alpha: false })
           if (!ctx) return
 
-          const dpr = Math.min(window.devicePixelRatio || 1, 2)
+          // Sharp on HiDPI screens, but keep big zooms under the canvas size
+          // limit of mobile browsers (about 16 million pixels on iOS)
+          const cssPixels = unscaled.width * scale * unscaled.height * scale
+          const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_CANVAS_PIXELS / cssPixels))
           const viewport = page.getViewport({ scale: scale * dpr })
 
           canvas.width = Math.floor(viewport.width)
