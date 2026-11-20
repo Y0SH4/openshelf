@@ -3,6 +3,7 @@ import { ArrowLeft, Folder, FolderPlus, FolderX, LogOut, RefreshCw } from "lucid
 import { cn } from "@/lib/utils"
 import { apiFetch, readError, type LibraryFolder } from "@/lib/api"
 import { FolderBrowser } from "@/components/settings/FolderBrowser"
+import { OfflineBooks } from "@/components/settings/OfflineBooks"
 import type { ThemeMode } from "@/components/library/LibraryHeader"
 
 interface SettingsViewProps {
@@ -247,6 +248,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <p className="text-xs text-muted-foreground mt-3">
             New files show up automatically within a minute. Use “Scan now” to see them right away.
           </p>
+        </Section>
+
+        <Section
+          title="Offline books"
+          description="Books saved on this device can be read without a connection. Your reading progress is sent when you're back online."
+        >
+          <OfflineBooks />
         </Section>
 
         <Section title="Page color">

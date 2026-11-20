@@ -1,5 +1,5 @@
 import React from "react"
-import { EllipsisVertical } from "lucide-react"
+import { CloudCheck, EllipsisVertical } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { ReadingProgressBar } from "@/components/reading/ReadingProgressBar"
 
@@ -26,10 +26,12 @@ interface BookCardProps {
   onSelect: (book: Book) => void
   onManageCategories?: (book: Book) => void
   variant?: "grid" | "list"
+  /** Saved on this device for offline reading */
+  offline?: boolean
 }
 
 export const BookCard: React.FC<BookCardProps> = React.memo(
-  ({ book, onSelect, onManageCategories, variant = "grid" }) => {
+  ({ book, onSelect, onManageCategories, variant = "grid", offline = false }) => {
     const progressPercent = book.progress?.progress_percent ?? 0
     const isNew = !book.progress || progressPercent <= 0
     const categories = book.categories ?? []
@@ -82,6 +84,7 @@ export const BookCard: React.FC<BookCardProps> = React.memo(
                 <span className="uppercase tracking-wide">{book.format}</span>
                 {subfolder && <> · {subfolder}</>}
                 {categories.length > 0 && <> · {categories.join(", ")}</>}
+                {offline && <> · Offline</>}
               </p>
             </div>
             <div className="w-20 sm:w-32 shrink-0 text-right">
@@ -115,6 +118,15 @@ export const BookCard: React.FC<BookCardProps> = React.memo(
           <Badge variant="kindle" className="absolute bottom-0 left-0">
             {book.format}
           </Badge>
+          {offline && (
+            <Badge
+              variant="kindle"
+              className="absolute bottom-0 right-0 px-1"
+              title="Saved for offline reading"
+            >
+              <CloudCheck className="w-3.5 h-3.5" aria-label="Offline" />
+            </Badge>
+          )}
 
           <span className="pointer-events-none absolute inset-0 ring-0 group-hover:ring-2 ring-inset ring-foreground" />
         </button>

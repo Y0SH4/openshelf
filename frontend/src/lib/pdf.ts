@@ -44,13 +44,14 @@ export async function getPdfJs(): Promise<any> {
 /** `total` is 0 when the server doesn't say how big the file is. */
 export type LoadProgress = (loaded: number, total: number) => void
 
+/** `source`: the book's URL, or its file already in memory (saved offline). */
 export async function loadPdfDocument(
-  url: string,
+  source: string | ArrayBuffer,
   onProgress?: LoadProgress
 ): Promise<PDFDocumentProxy> {
   const pdfjs = await getPdfJs()
   const loadingTask = pdfjs.getDocument({
-    url,
+    ...(typeof source === "string" ? { url: source } : { data: new Uint8Array(source) }),
     cMapPacked: true,
   })
   if (onProgress) {

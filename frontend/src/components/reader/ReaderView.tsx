@@ -3,6 +3,8 @@ import { apiFetch } from "@/lib/api"
 import {
   ArrowLeft,
   ChevronLeft,
+  CloudCheck,
+  CloudDownload,
   ChevronRight,
   Languages,
   Minus,
@@ -19,6 +21,14 @@ import { NotesEditor, type NotesEditorHandle } from "@/components/notes/NotesEdi
 import { NotesList } from "@/components/notes/NotesList"
 import { createNote, readLastNoteId, storeLastNoteId, type PageLink } from "@/lib/notes"
 import { loadPdfDocument, type PDFDocumentProxy } from "@/lib/pdf"
+import {
+  offlineBookData,
+  offlineSupported,
+  queueProgress,
+  removeBookOffline,
+  saveBookOffline,
+  useOfflineBooks,
+} from "@/lib/offline"
 import { googleTranslateUrl, translationEnabled } from "@/lib/translate"
 import { cn } from "@/lib/utils"
 import type { Book } from "@/components/library/BookCard"
@@ -41,7 +51,8 @@ interface ReaderViewProps {
   ) => void
 }
 
-type SaveStatus = "saved" | "saving" | "unsaved"
+/** "local": saved on this device while offline, sent to the server later */
+type SaveStatus = "saved" | "saving" | "unsaved" | "local"
 
 interface Selection {
   text: string
@@ -157,6 +168,8 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     const [loadingDoc, setLoadingDoc] = useState(isPdf)
     const [download, setDownload] = useState<{ loaded: number; total: number } | null>(null)
     const [loadError, setLoadError] = useState<string | null>(null)
+    /** The server can't be reached and this book isn't saved offline */
+    const [unreachable, setUnreachable] = useState(false)
     const [zoom, setZoom] = useState<Zoom>(readStoredZoom)
     /** Width of the reading area, for "fit width" */
     const [viewWidth, setViewWidth] = useState(0)
@@ -220,7 +233,10 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
         setDownload({ loaded, total })
       }
 
-      loadPdfDocument(`/api/books/${book.id}/raw`, onProgress)
+      // A book saved for offline reading opens from the device
+      offlineBookData(book.id)
+        .catch(() => null)
+        .then((data) => loadPdfDocument(data ?? `/api/books/${book.id}/raw`, onProgress))
         .then(async (pdf) => {
           loaded = pdf
           if (cancelled) return
@@ -233,10 +249,18 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
           setDoc(pdf)
           setLoadingDoc(false)
         })
-        .catch((err) => {
+        .catch(async (err) => {
           if (cancelled) return
           console.error("Failed to load PDF:", err)
-          setLoadError("This PDF couldn't be rendered. Showing the browser's viewer instead.")
+          const serverUp = await fetch("/api/health", { cache: "no-store" })
+            .then((res) => res.ok)
+            .catch(() => false)
+          if (cancelled) return
+          if (serverUp) {
+            setLoadError("This PDF couldn't be rendered. Showing the browser's viewer instead.")
+          } else {
+            setUnreachable(true)
+          }
           setLoadingDoc(false)
         })
 
@@ -250,13 +274,23 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
     const saveProgress = useCallback(
       async (page: number, total: number, keepalive = false) => {
         setSaveStatus("saving")
+        let res: Response
         try {
-          const res = await apiFetch(`/api/books/${book.id}/progress`, {
+          res = await apiFetch(`/api/books/${book.id}/progress`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ current_page: page, total_pages: total }),
             keepalive,
           })
+        } catch {
+          // No connection: keep it on this device and send it later
+          queueProgress(book.id, page, total)
+          lastSavedPageRef.current = page
+          setSaveStatus("local")
+          onProgressSavedRef.current(book.id, page, total, Math.min(100, (page / total) * 100))
+          return
+        }
+        try {
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const data = await res.json()
           lastSavedPageRef.current = page
@@ -351,6 +385,29 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
       },
       []
     )
+
+    // ---------- Offline ----------
+    const savedOffline = useOfflineBooks()[book.id] != null
+    /** 0–1 while saving (null when the size is unknown), undefined when idle */
+    const [offlineSaving, setOfflineSaving] = useState<number | null | undefined>(undefined)
+    const [offlineError, setOfflineError] = useState<string | null>(null)
+
+    const toggleOffline = async () => {
+      setOfflineError(null)
+      if (savedOffline) {
+        await removeBookOffline(book.id)
+        return
+      }
+      setOfflineSaving(0)
+      try {
+        await saveBookOffline(book, setOfflineSaving)
+      } catch (err) {
+        setOfflineError(err instanceof Error ? err.message : "Couldn't save this book.")
+        window.setTimeout(() => setOfflineError(null), 5000)
+      } finally {
+        setOfflineSaving(undefined)
+      }
+    }
 
     // ---------- Zoom ----------
     const contentRef = useRef<HTMLDivElement>(null)
@@ -639,8 +696,12 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
 
     const shownPage = scrubPage ?? currentPage
     const shownPercent = Math.round((shownPage / (totalPages || 1)) * 100)
-    const saveLabel =
-      saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Not saved yet"
+    const saveLabel = {
+      saving: "Saving…",
+      saved: "Saved",
+      unsaved: "Not saved yet",
+      local: "Saved on this device",
+    }[saveStatus]
     // Leave room for the notes panel on wider screens
     const besidePanel = notesOpen && "sm:right-[min(440px,45vw)]"
 
@@ -673,6 +734,16 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
             <div className="h-full flex flex-col items-center justify-center text-center px-6">
               <p className="font-serif text-lg max-w-md">Opening {book.title}…</p>
               <DownloadProgress progress={download} />
+            </div>
+          ) : unreachable ? (
+            <div className="h-full flex items-center justify-center p-6">
+              <div className="max-w-sm text-center border border-foreground p-8">
+                <p className="font-serif text-xl font-bold">You're offline</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  This book isn't saved on this device. Next time you're connected, open it and
+                  tap the cloud icon at the top to read it offline.
+                </p>
+              </div>
             </div>
           ) : loadError ? (
             <div className="h-full flex flex-col pt-16 pb-8 px-4">
@@ -725,6 +796,33 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
             <h1 className="flex-1 min-w-0 text-center font-serif text-[15px] font-medium truncate px-2">
               {book.title}
             </h1>
+
+            {isPdf && offlineSupported() && (
+              <button
+                type="button"
+                onClick={toggleOffline}
+                disabled={offlineSaving !== undefined}
+                aria-pressed={savedOffline}
+                className="h-10 min-w-10 px-2 flex items-center justify-center gap-1 shrink-0 hover:bg-accent text-xs tabular-nums"
+                title={
+                  savedOffline
+                    ? "Saved for offline reading. Click to remove it from this device."
+                    : "Save for offline reading"
+                }
+                aria-label={savedOffline ? "Remove offline copy" : "Save for offline reading"}
+              >
+                {offlineSaving !== undefined ? (
+                  <>
+                    <CloudDownload className="w-5 h-5 animate-pulse" />
+                    {offlineSaving != null && `${Math.round(offlineSaving * 100)}%`}
+                  </>
+                ) : savedOffline ? (
+                  <CloudCheck className="w-5 h-5" />
+                ) : (
+                  <CloudDownload className="w-5 h-5" />
+                )}
+              </button>
+            )}
 
             <button
               type="button"
@@ -784,6 +882,11 @@ export const ReaderView: React.FC<ReaderViewProps> = React.memo(
               )}
             </DisplayMenu>
           </div>
+          {offlineError && (
+            <p role="alert" className="px-4 py-2 text-sm border-t border-rule">
+              {offlineError}
+            </p>
+          )}
         </header>
 
         {isPdf && (

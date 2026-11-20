@@ -4,7 +4,8 @@ import { cn } from "@/lib/utils"
 import { DisplayMenu } from "@/components/reading/DisplayMenu"
 
 export type ThemeMode = "light" | "sepia" | "dark"
-export type FormatFilter = "all" | "pdf" | "epub"
+/** "offline": books saved on this device */
+export type FormatFilter = "all" | "pdf" | "epub" | "offline"
 export type SortMode = "title" | "progress" | "file"
 export type ViewMode = "grid" | "list"
 
@@ -25,6 +26,8 @@ interface LibraryHeaderProps {
   onLogout?: () => void
   onOpenSettings?: () => void
   onOpenNotes?: () => void
+  /** Show the "Offline" tab (some books are saved on this device) */
+  hasOfflineBooks?: boolean
 }
 
 const FORMAT_TABS: { id: FormatFilter; label: string }[] = [
@@ -57,7 +60,11 @@ export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
     onLogout,
     onOpenSettings,
     onOpenNotes,
+    hasOfflineBooks = false,
   }) => {
+    const tabs = hasOfflineBooks
+      ? [...FORMAT_TABS, { id: "offline" as const, label: "Offline" }]
+      : FORMAT_TABS
     return (
       <>
         {/* Toolbar (sibling of <header> so it stays sticky for the whole page) */}
@@ -149,7 +156,7 @@ export const LibraryHeader: React.FC<LibraryHeaderProps> = React.memo(
 
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between gap-4 border-b border-rule">
           <nav className="flex items-center gap-6" aria-label="Format">
-            {FORMAT_TABS.map((tab) => {
+            {tabs.map((tab) => {
               const active = formatFilter === tab.id
               return (
                 <button

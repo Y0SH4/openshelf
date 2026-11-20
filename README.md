@@ -18,6 +18,7 @@ Point OpenShelf at the folders where you keep your books. It scans them (includi
 - **Reading progress** is saved automatically, per book.
 - **Notes.** Notion-style notes shown as cards, with headings, lists, to-dos and quotes. Open them from the Library or next to the book you're reading. Select text in a PDF to quote it into a note, or insert a link to the current page; clicking a page link opens the book at that page. Notes are stored as Markdown.
 - **Translate selected text** into Indonesian, right in the reader, with your own [LibreTranslate](https://libretranslate.com) server. Without one, the Translate button opens Google Translate.
+- **Read offline.** Install OpenShelf on your phone or computer (it's a PWA), save books to the device, and read them without a connection. Reading progress made offline is sent when you're back online. Needs HTTPS (see below).
 - **Collections, search, filters and sorting.** Grid or list view.
 - **One private account**, protected by a setup code on first run and rate-limited sign-in.
 - EPUB books can be downloaded. In-browser EPUB reading is planned.
@@ -88,6 +89,15 @@ Everything is optional and set with environment variables.
 | `OPENSHELF_TRANSLATE_API_KEY` | | API key, if that LibreTranslate server needs one |
 | `OPENSHELF_FRONTEND_DIR` | `frontend/dist` | Built frontend to serve |
 | `OPENSHELF_CORS_ORIGIN` | | Only needed if the frontend is hosted on a different origin |
+
+## Install as an app and read offline
+
+OpenShelf can be installed like an app ("Add to Home Screen" on phones, the install icon in the address bar on desktop) and books can be saved for offline reading with the cloud icon in the reader. Browsers only allow this over **HTTPS**, so open OpenShelf through HTTPS, for example:
+
+- **Tailscale:** `tailscale serve --bg --https=443 http://127.0.0.1:3000`, then open `https://<machine>.<tailnet>.ts.net`.
+- **A reverse proxy** with HTTPS, like the Caddy example below.
+
+On iPhone and iPad, add OpenShelf to the Home Screen: Safari may otherwise clear saved books of sites you haven't opened for a while.
 
 ## Accessing it from outside your home network
 

@@ -17,6 +17,13 @@ import { SettingsView } from "@/components/settings/SettingsView"
 import { NotesView } from "@/components/notes/NotesView"
 import type { PageLink } from "@/lib/notes"
 import { apiFetch, UNAUTHORIZED_EVENT, type AuthStatus } from "@/lib/api"
+import {
+  clearOfflineData,
+  flushPendingProgress,
+  pendingProgress,
+  useOfflineBooks,
+  useOnline,
+} from "@/lib/offline"
 
 // localStorage can throw (private mode, blocked storage) — never let that break the app.
 function readPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
@@ -93,7 +100,23 @@ export default function App() {
         return res.json()
       })
       .then((data: Book[]) => {
-        setBooks(data)
+        // Progress read offline that the server doesn't have yet
+        const pending = pendingProgress()
+        setBooks(
+          data.map((b) => {
+            const p = pending[b.id]
+            return p
+              ? {
+                  ...b,
+                  progress: {
+                    current_page: p.current_page,
+                    total_pages: p.total_pages,
+                    progress_percent: Math.min(100, (p.current_page / p.total_pages) * 100),
+                  },
+                }
+              : b
+          })
+        )
         setLoadError(false)
         setLoading(false)
       })
@@ -149,12 +172,26 @@ export default function App() {
     fetchCategories()
   }, [isReady, fetchBooks, fetchCategories])
 
+  // Send progress read offline as soon as the server can be reached again
+  const online = useOnline()
+  useEffect(() => {
+    if (!isReady || !online) return
+    flushPendingProgress().then((sent) => {
+      if (sent > 0) fetchBooks()
+    })
+  }, [isReady, online, fetchBooks])
+
+  const offlineList = useOfflineBooks()
+  const hasOfflineBooks = Object.keys(offlineList).length > 0
+
   const handleLogout = useCallback(async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" })
     } catch {
       // Even if the server is unreachable, leave the library locally
     }
+    // Don't leave the library, books or notes on a shared device
+    await clearOfflineData().catch(() => {})
     setSelectedBook(null)
     setManagingBook(null)
     setBooks([])
@@ -198,7 +235,12 @@ export default function App() {
     const query = search.trim().toLowerCase()
     const result = books.filter((b) => {
       const matchesSearch = query === "" || b.title.toLowerCase().includes(query)
-      const matchesFormat = formatFilter === "all" || b.format === formatFilter
+      const matchesFormat =
+        formatFilter === "all" ||
+        b.format === formatFilter ||
+        (formatFilter === "offline" && b.id in offlineList)
+      // Without a connection only saved books can be opened
+      if (!online && !(b.id in offlineList)) return false
       const matchesCategory =
         selectedCategory === "all" ||
         (b.categories?.includes(selectedCategory) ?? false)
@@ -218,7 +260,7 @@ export default function App() {
           byTitle(a, b)
       )
     return result
-  }, [books, search, formatFilter, selectedCategory, sortMode])
+  }, [books, search, formatFilter, selectedCategory, sortMode, online, offlineList])
 
   const handleCategoryCreated = useCallback((newCat: CategoryItem) => {
     setCategories((prev) =>
@@ -369,6 +411,7 @@ export default function App() {
         onLogout={handleLogout}
         onOpenSettings={openSettings}
         onOpenNotes={openNotes}
+        hasOfflineBooks={hasOfflineBooks}
       />
 
       <CategoryFilterBar
@@ -381,6 +424,14 @@ export default function App() {
       />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 pb-16">
+        {!online && (
+          <p role="status" className="mb-6 border border-foreground px-4 py-3 text-sm">
+            <strong>You're offline.</strong>{" "}
+            {hasOfflineBooks
+              ? "Showing the books saved on this device. Reading progress is kept and sent when you're back online."
+              : "No books are saved on this device yet. Open a book while connected and tap the cloud icon to keep it for offline reading."}
+          </p>
+        )}
         {loading ? (
           <div className="py-24 text-center">
             <p className="font-serif text-lg">Loading your library…</p>
@@ -439,6 +490,7 @@ export default function App() {
                 key={book.id}
                 book={book}
                 variant="list"
+                offline={book.id in offlineList}
                 onSelect={openBook}
                 onManageCategories={setManagingBook}
               />
@@ -451,6 +503,7 @@ export default function App() {
                 key={book.id}
                 book={book}
                 variant="grid"
+                offline={book.id in offlineList}
                 onSelect={openBook}
                 onManageCategories={setManagingBook}
               />
